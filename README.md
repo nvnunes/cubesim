@@ -20,11 +20,37 @@ simulation workflows.
 `cubesim` does not own PSF simulation. It consumes persisted PSF artifacts,
 with pickle as the initial supported format.
 
-Planned early work:
-- define the initial public API
-- add config-driven instrument definitions
-- implement the minimal ETC compute path
-- establish artifact handling for atmospheric and instrument-specific inputs
+## Project Docs
+
+- `docs/architecture.md`
+  - package shape, public API boundaries, artifact and ETC-input contracts, and
+    compute lifecycle
+- `docs/testing.md`
+  - verification commands and completion expectations
+- `docs/development.md`
+  - local environment setup and daily commands
+- `docs/plan.md`
+  - near-term phased work and deferred planning context
+
+## Local Development Setup
+
+The canonical local development workflow uses the repo-local `./.conda`
+environment.
+
+For a fresh clone, create or activate a Python 3.12+ environment at `./.conda`
+with your preferred environment manager, then install the package in editable
+mode with the `dev` extra:
+
+```bash
+./.conda/bin/python -m pip install -e ".[dev]"
+```
+
+After the editable install is current, run the test suite from the same
+environment:
+
+```bash
+./.conda/bin/python -m pytest -q
+```
 
 ## License
 

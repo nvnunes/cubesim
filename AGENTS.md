@@ -1,63 +1,32 @@
-# Cubesim Agent Brief
+# AGENTS.md
+
+## Astro-Agents Bootstrap
+- Use `astro-agents` for reusable authoring, review, and routing guidance in this repo.
 
 ## Scope
-- `cubesim` is a reusable ETC framework intended for public release.
-- Prefer stable contracts and incremental changes over broad rewrites.
-- Preserve science-visible behavior unless a change is explicitly intended and documented.
+- Documentation surface profile: public-python.
 
-## Architecture
-- Keep clear boundaries between:
-  - instrument config loading
-  - target/source model construction
-  - background, throughput, QE, detector, and noise models
-  - ETC computation and result assembly
-  - reusable analysis helpers
-- Treat the package root as a deliberate public API boundary.
-- Re-export only supported user-facing entrypoints there.
-- Keep project-specific behavior out of `cubesim`.
+## Source Of Truth Docs
+- Follow `README.md` for the repo's public summary and starting docs.
+- Follow `docs/architecture.md` for package shape, public API boundaries, artifact and ETC-input contract ownership, and compute lifecycle.
+- Follow `docs/testing.md` for canonical verification commands and completion expectations.
+- Follow `docs/development.md` for local environment setup and daily commands.
 
-## Contracts
-- Treat instrument configs, artifact references, and ETC inputs as explicit contracts.
-- Validate early with actionable errors.
-- Avoid silent coercions and hidden fallback behavior.
-- Keep one obvious owner per contract.
-- Define stable keys and field names as named constants in the narrowest module that owns the contract.
+## Shared Guidance
+- Use `astro-agents/guidance/agent-surface.md` for shared agent-surface guidance.
+- Use `astro-agents/guidance/public-python-projects.md` for shared public Python repo guidance.
+- Use `astro-agents/guidance/python-development.md` for shared Python architecture, coding-policy, and development-workflow guidance.
 
-## Code Style
-- Optimize for readability, homogeneity, and symmetry in naming and ordering.
-- Prefer explicit ownership over convenience abstractions.
-- Remove stale indirection rather than preserving weak abstraction layers.
-- Keep helpers in the narrowest module that owns the behavior.
-- Keep comments concise and technical.
-- Update docstrings when behavior or ownership changes.
-- Prefer explicit names that match actual behavior.
-- Inline helpers that do too little to justify abstraction.
-- Collapse duplicated validators or wrappers when they enforce the same invariant.
-- Push back before implementing changes that reduce clarity or consistency.
+## Authoring Requirements
+- For Python code, follow `astro-agents/authoring/code/python.md`.
+- For repo docs such as `docs/architecture.md`, `docs/testing.md`, `docs/development.md`, and similar long-lived repo documents, follow `astro-agents/authoring/writing/repo-docs.md`.
+- For `README.md`, follow `astro-agents/authoring/writing/readme-md.md` in addition to `astro-agents/authoring/writing/repo-docs.md`.
+- For plan documents or phased execution docs when they are created or revised, follow `astro-agents/authoring/writing/plan.md`.
 
-## Module Organization
-- Prefer a consistent module order:
-  - constants first
-  - data structures next (`dataclass`, types, enums)
-  - properties or simple accessors near the top
-  - helper primitives next
-  - composed helpers next
-  - public entrypoints last
-- If a module follows a strong lifecycle, order methods by lifecycle instead.
-- Separate logical blocks with clear section comments.
+## Working Rules
+- For package structure, public API boundaries, persisted contracts, and compute-lifecycle-sensitive changes, consult `docs/architecture.md` before editing.
+- Before concluding substantial work, satisfy the verification expectations in `docs/testing.md`.
+- Use the local `./.conda` environment and the workflow in `docs/development.md` for Python commands and test runs unless a task explicitly requires something else.
 
-## Public API
-- Keep public APIs clean, explicit, and minimally surprising.
-- CLI or scripts should remain thin wrappers over the Python API.
-- Do not expand the public API casually.
-
-## Testing Expectations
-- Add or adjust tests with every behavior change.
-- Prioritize numerical regression protection for ETC behavior.
-- Prefer tests of externally visible behavior over tests coupled to internal structure.
-- When refactoring, confirm representative ETC workflows still match within defined tolerances.
-
-## Quality Bar
-- Keep docs and examples aligned with code.
-- If an abstraction does not clearly improve the reusable package boundary, do not add it.
-- Clean up stale comments, duplicated contract checks, and outdated docstrings in touched code.
+## Review Lens
+- Favor contract ownership, lifecycle clarity, and preservation of science-visible behavior in review.
