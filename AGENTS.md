@@ -26,4 +26,4 @@
 - Use the local `./.conda` environment and the workflow in `docs/development.md` for Python commands and test runs unless a task explicitly requires something else.
 
 ## Review Lens
-- Favor contract ownership, lifecycle clarity, and preservation of science-visible behavior in review.
+- Prioritize preservation of science-visible behavior in review.
