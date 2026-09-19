@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cubesim"
 version = "0.0.1"
-description = "Reusable exposure time calculator framework"
+description = "Exposure time calculator framework for integral-field spectrographs"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "MIT License"}
@@ -13,7 +13,9 @@ authors = [
     {name = "Nelson V. Nunes", email = "nvnunes@yorku.ca"},
 ]
 dependencies = [
+    "astropy>=7.0.0",
     "numpy>=2.2.0",
+    "scipy>=1.14.1",
 ]
 
 [project.optional-dependencies]

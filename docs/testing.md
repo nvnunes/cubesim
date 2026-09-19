@@ -3,17 +3,6 @@
 This document is the source of truth for verification commands and completion
 expectations in `cubesim`.
 
-## Shared Validation
-
-Use this document as the source of truth for local verification commands and
-completion expectations.
-
-For shared review, use:
-
-- `$agent-surface-review` when agent-facing instructions, docs, or skill-selection context changes.
-- `$documentation-surface-review` when documentation surface behavior changes.
-- `$code-quality-review` for source-code quality review when requested or when the change needs review beyond tests.
-
 ## Environment
 
 Use the local `./.conda` environment for Python commands and test runs unless a
@@ -45,7 +34,7 @@ Finish with the full test suite for changes that affect:
 
 - package-root exports
 - ETC input or PSF contract validation
-- artifact loading or normalization behavior
+- instrument-data loading or PSF normalization behavior
 - compute preconditions or result behavior
 - README or docs examples that describe public API use
 

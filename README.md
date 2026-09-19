@@ -1,36 +1,59 @@
 # cubesim
 
-`cubesim` is a simple exposure time calculator framework for quick setup and
-use.
+`cubesim` is an exposure time calculator framework for integral-field
+spectrographs.
 
-It is intended for the stage before a full ETC is built: enough structure to
-configure an instrument, ingest PSF artifacts, and compute useful signal and
-noise estimates without building a complete end-user ETC.
+The current implementation loads and validates an instrument-data directory,
+selects its observing modes, and accepts a direct PSF. The forward ETC
+calculation is not implemented yet.
 
-It provides a focused core for:
+Its intended calculation scope is:
+
 - instrument configuration and derived ETC state
 - target and source model construction
-- PSF artifact ingestion and application
+- PSF input ingestion and application
 - background, throughput, detector, signal, noise, and SNR computation
 
-`cubesim` is intentionally not a full-featured ETC framework. It is designed
-to stay lightweight, direct, and easy to wire into early instrument and
-simulation workflows.
+An instrument integration consists only of an `etc.ini` file and the data
+files it references. Configuration, ECSV table loading, and direct PSF input
+are the portions implemented currently. Real instrument datasets
+are distributed separately from the Python package.
 
-`cubesim` does not own PSF simulation. It consumes persisted PSF artifacts,
-with pickle as the initial supported format.
+`cubesim` does not own PSF simulation. Direct PSFs may be supplied as FITS,
+NPY, or in-memory two-dimensional arrays. FITS files carry `PIXSCALE` in mas
+per pixel; NPY and in-memory inputs require an explicit angular pixel scale.
+
+## Current API
+
+```python
+import astropy.units as u
+import cubesim
+
+etc = cubesim.Etc("/path/to/instrument-data")
+etc.configure(
+    spatial_mode="50mas",
+    spectral_mode="r3000_yj",
+    atmosphere_mode="pwv10_airmass10",
+)
+etc.set_psf("psf.npy", pixel_scale=10 * u.mas)
+```
+
+The instrument-data directory must contain `etc.ini` at its root. Paths in
+that file are relative to the same directory; cubesim does not search the
+current directory, package data, environment variables, or the network.
+Direct PSF paths may be absolute or relative to the instrument-data directory.
 
 ## Project Docs
 
-- `docs/architecture.md`
-  - package shape, public API boundaries, artifact and ETC-input contracts, and
+- [`docs/architecture.md`](docs/architecture.md)
+  - package shape, public API boundaries, data and ETC-input ownership, and
     compute lifecycle
-- `docs/testing.md`
+- [`docs/instrument-data.md`](docs/instrument-data.md)
+  - instrument directory, INI schema, path resolution, and ECSV table contracts
+- [`docs/testing.md`](docs/testing.md)
   - verification commands and completion expectations
-- `docs/development.md`
+- [`docs/development.md`](docs/development.md)
   - local environment setup and daily commands
-- `docs/plan.md`
-  - near-term phased work and deferred planning context
 
 ## Local Development Setup
 
