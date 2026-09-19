@@ -36,6 +36,30 @@ def test_set_psf_copies_centers_and_normalizes_array(instrument_data) -> None:
     assert etc._psf.pixel_scale == 10 * u.mas
 
 
+@pytest.mark.parametrize("shape", [(31, 35), (32, 36)])
+def test_set_psf_centers_smooth_asymmetric_odd_and_even_arrays(
+    instrument_data,
+    shape: tuple[int, int],
+) -> None:
+    y, x = np.indices(shape)
+    source = np.exp(
+        -0.5
+        * (
+            ((x - ((shape[1] - 1) / 2 + 0.7)) / 1.3) ** 2
+            + ((y - ((shape[0] - 1) / 2 - 0.45)) / 1.7) ** 2
+        )
+    )
+    etc = cubesim.Etc(instrument_data)
+
+    etc.set_psf(source, pixel_scale=10 * u.mas)
+
+    assert etc._psf is not None
+    center_x, center_y = _pixel_center_centroid(etc._psf.data)
+    assert center_x == pytest.approx(shape[1] / 2, abs=1e-5)
+    assert center_y == pytest.approx(shape[0] / 2, abs=1e-5)
+    assert etc._psf.data.sum() == pytest.approx(1.0)
+
+
 def test_set_psf_loads_relative_npy(instrument_data) -> None:
     np.save(instrument_data / "psf.npy", np.ones((3, 3)))
     etc = cubesim.Etc(instrument_data)
@@ -114,3 +138,12 @@ def test_set_psf_rejects_pickle_file(instrument_data) -> None:
 
     with pytest.raises(ValueError, match="FITS or NPY"):
         etc.set_psf(path, pixel_scale=1 * u.mas)
+
+
+def _pixel_center_centroid(array: np.ndarray) -> tuple[float, float]:
+    y, x = np.indices(array.shape)
+    total = array.sum()
+    return (
+        float(((x + 0.5) * array).sum() / total),
+        float(((y + 0.5) * array).sum() / total),
+    )

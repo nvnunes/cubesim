@@ -111,7 +111,9 @@ Diameters, f-number, spaxel counts, scales, resolving power,
 pixels-per-resolution-element, PWV, airmass, and temperature are positive.
 Detector terms are non-negative, and throughput, emissivity, and QE are in the
 inclusive range zero to one. The central obscuration must be smaller than the
-primary diameter, and each wavelength maximum must exceed its minimum.
+primary diameter, and each wavelength maximum must exceed its minimum. A
+selected scale and disperser must produce at least two detector wavelength
+samples and at least two internal high-resolution wavelength samples.
 
 ## ECSV Tables
 

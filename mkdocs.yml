@@ -1,0 +1,34 @@
+site_name: cubesim
+site_description: Exposure time calculator framework for integral-field spectrographs
+repo_name: cubesim
+docs_dir: docs
+strict: true
+
+theme:
+  name: material
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - src
+          options:
+            show_root_heading: true
+            show_source: false
+            heading_level: 2
+            members_order: source
+
+nav:
+  - Home: index.md
+  - Guides:
+      - Python API: api.md
+      - Instrument Data: instrument-data.md
+      - Architecture: architecture.md
+      - Testing: testing.md
+      - Development Setup: development.md
+  - Reference:
+      - ETC: reference/etc.md
+      - Target Models: reference/models.md
+      - Results And Persistence: reference/results.md

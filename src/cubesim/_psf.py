@@ -62,7 +62,7 @@ def load_psf(
 
     data = _validate_array(data)
     pixel_scale = _validate_pixel_scale(pixel_scale)
-    data = _center_like_legacy(data)
+    data = _center_psf(data)
     data /= data.sum()
     data.setflags(write=False)
     return Psf(data=data, pixel_scale=pixel_scale, path=path)
@@ -121,7 +121,7 @@ def _validate_pixel_scale(pixel_scale: Any) -> u.Quantity:
     return pixel_scale
 
 
-def _center_like_legacy(data: np.ndarray) -> np.ndarray:
+def _center_psf(data: np.ndarray) -> np.ndarray:
     filtered = ndimage.gaussian_filter(data, sigma=0.5)
     y_indices, x_indices = np.indices(data.shape)
     centroid_x = np.sum((x_indices + 0.5) * filtered) / filtered.sum()

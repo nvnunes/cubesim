@@ -46,8 +46,8 @@ light_leak = 0.01
 quantum_efficiency_file = qe.ecsv
 
 [scale.50mas]
-spaxels_x = 40
-spaxels_y = 30
+spaxels_x = 4
+spaxels_y = 3
 spaxel_scale = 50
 
 [disperser.r3000]
