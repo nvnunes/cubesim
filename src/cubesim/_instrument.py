@@ -12,9 +12,15 @@ import astropy.units as u
 import numpy as np
 from astropy.table import QTable
 
-_NAME_PATTERN = re.compile(r"^[a-z0-9_]+$")
+_NAME_PATTERN = re.compile(r"^[a-z0-9_-]+$")
 _UNIFORM_RTOL = 1e-7
-_Mode = TypeVar("_Mode")
+_DISPERSER_KEYS = {
+    "resolving_power",
+    "pixels_per_resolution_element",
+    "wavelength_min",
+    "wavelength_max",
+}
+_Option = TypeVar("_Option")
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +49,7 @@ class DetectorDefinition:
 
 
 @dataclass(frozen=True, slots=True)
-class SpatialMode:
+class Scale:
     name: str
     spaxels_x: int
     spaxels_y: int
@@ -51,7 +57,7 @@ class SpatialMode:
 
 
 @dataclass(frozen=True, slots=True)
-class SpectralMode:
+class Disperser:
     name: str
     resolving_power: float
     pixels_per_resolution_element: float
@@ -60,7 +66,7 @@ class SpectralMode:
 
 
 @dataclass(frozen=True, slots=True)
-class AtmosphereMode:
+class Atmosphere:
     name: str
     pwv: u.Quantity
     airmass: float
@@ -71,7 +77,7 @@ class AtmosphereMode:
 @dataclass(frozen=True, slots=True)
 class OpticalComponent:
     name: str
-    spectral_mode: str | None
+    disperser_scope: str | None
     order: int
     throughput: float
     emissivity: float
@@ -80,9 +86,9 @@ class OpticalComponent:
 
 @dataclass(frozen=True, slots=True)
 class InstrumentSelection:
-    spatial_mode: SpatialMode
-    spectral_mode: SpectralMode
-    atmosphere_mode: AtmosphereMode
+    scale: Scale
+    disperser: Disperser
+    atmosphere: Atmosphere
     optical_components: tuple[OpticalComponent, ...]
 
 
@@ -92,57 +98,59 @@ class InstrumentDefinition:
     name: str
     telescope: TelescopeDefinition
     detector: DetectorDefinition
-    spatial_modes: dict[str, SpatialMode]
-    spectral_modes: dict[str, SpectralMode]
-    atmosphere_modes: dict[str, AtmosphereMode]
+    scales: dict[str, Scale]
+    dispersers: dict[str, Disperser]
+    atmospheres: dict[str, Atmosphere]
     optical_components: tuple[OpticalComponent, ...]
 
     def select(
         self,
         *,
-        spatial_mode: str,
-        spectral_mode: str,
-        atmosphere_mode: str,
+        scale: str,
+        disperser: str,
+        atmosphere: str,
     ) -> InstrumentSelection:
-        """Resolve exact mode names and validate their combined data."""
+        """Resolve exact option names and validate their combined data."""
 
-        spatial = _select_mode("spatial", spatial_mode, self.spatial_modes)
-        spectral = _select_mode("spectral", spectral_mode, self.spectral_modes)
-        atmosphere = _select_mode(
-            "atmosphere", atmosphere_mode, self.atmosphere_modes
+        selected_scale = _select_option("scale", scale, self.scales)
+        selected_disperser = _select_option("disperser", disperser, self.dispersers)
+        selected_atmosphere = _select_option(
+            "atmosphere", atmosphere, self.atmospheres
         )
 
         components = tuple(
             component
             for component in self.optical_components
-            if component.spectral_mode in {None, spectral_mode}
+            if component.disperser_scope is None
+            or disperser == component.disperser_scope
+            or disperser.startswith(f"{component.disperser_scope}.")
         )
         names = [component.name for component in components]
         if len(names) != len(set(names)):
             raise ValueError(
-                f"Optical path for spectral mode {spectral_mode!r} has duplicate "
+                f"Optical path for disperser {disperser!r} has duplicate "
                 "component names."
             )
         orders = [component.order for component in components]
         if len(orders) != len(set(orders)):
             raise ValueError(
-                f"Optical path for spectral mode {spectral_mode!r} has duplicate "
+                f"Optical path for disperser {disperser!r} has duplicate "
                 "order values."
             )
         components = tuple(
             sorted(components, key=lambda component: component.order)
         )
 
-        tables = [atmosphere.transmission, atmosphere.background]
+        tables = [selected_atmosphere.transmission, selected_atmosphere.background]
         if self.detector.quantum_efficiency_table is not None:
             tables.append(self.detector.quantum_efficiency_table)
         for table in tables:
-            _validate_coverage(table, spectral)
+            _validate_coverage(table, selected_disperser)
 
         return InstrumentSelection(
-            spatial_mode=spatial,
-            spectral_mode=spectral,
-            atmosphere_mode=atmosphere,
+            scale=selected_scale,
+            disperser=selected_disperser,
+            atmosphere=selected_atmosphere,
             optical_components=components,
         )
 
@@ -188,19 +196,19 @@ def load_instrument(instrument_data: str | Path) -> InstrumentDefinition:
         )
 
     detector = _load_detector(parser, root)
-    spatial_modes = _load_spatial_modes(parser)
-    spectral_modes = _load_spectral_modes(parser)
-    atmosphere_modes = _load_atmosphere_modes(parser, root)
-    optical_components = _load_optical_components(parser, spectral_modes)
+    scales = _load_scales(parser)
+    dispersers, disperser_scopes = _load_dispersers(parser)
+    atmospheres = _load_atmospheres(parser, root)
+    optical_components = _load_optical_components(parser, disperser_scopes)
 
     return InstrumentDefinition(
         root=root,
         name=name,
         telescope=telescope,
         detector=detector,
-        spatial_modes=spatial_modes,
-        spectral_modes=spectral_modes,
-        atmosphere_modes=atmosphere_modes,
+        scales=scales,
+        dispersers=dispersers,
+        atmospheres=atmospheres,
         optical_components=optical_components,
     )
 
@@ -221,16 +229,21 @@ def _validate_section_inventory(parser: configparser.ConfigParser) -> None:
     if missing:
         raise ValueError(f"etc.ini is missing required sections: {sorted(missing)}")
 
-    counts = {"spatial_mode": 0, "spectral_mode": 0, "atmosphere_mode": 0}
+    counts = {"scale": 0, "disperser": 0, "atmosphere": 0}
     for section in parser.sections():
         if section in required:
             continue
         parts = section.split(".")
-        if parts[0] in counts and len(parts) == 2:
+        if parts[0] in {"scale", "atmosphere"} and len(parts) == 2:
             _validate_name(parts[1], section)
             counts[parts[0]] += 1
             continue
-        if parts[0] == "optical_component" and len(parts) in {2, 3}:
+        if parts[0] == "disperser" and len(parts) >= 2:
+            for name in parts[1:]:
+                _validate_name(name, section)
+            counts[parts[0]] += 1
+            continue
+        if parts[0] == "optics" and len(parts) >= 2:
             for name in parts[1:]:
                 _validate_name(name, section)
             continue
@@ -238,7 +251,7 @@ def _validate_section_inventory(parser: configparser.ConfigParser) -> None:
 
     empty = [namespace for namespace, count in counts.items() if count == 0]
     if empty:
-        raise ValueError(f"etc.ini must define at least one mode for: {empty}")
+        raise ValueError(f"etc.ini must define at least one option for: {empty}")
 
 
 def _section(
@@ -307,20 +320,20 @@ def _load_detector(
     )
 
 
-def _load_spatial_modes(
+def _load_scales(
     parser: configparser.ConfigParser,
-) -> dict[str, SpatialMode]:
-    modes: dict[str, SpatialMode] = {}
+) -> dict[str, Scale]:
+    scales: dict[str, Scale] = {}
     for section_name in parser.sections():
-        if not section_name.startswith("spatial_mode."):
+        if not section_name.startswith("scale."):
             continue
-        name = section_name.removeprefix("spatial_mode.")
+        name = section_name.removeprefix("scale.")
         values = _section(
             parser,
             section_name,
             required={"spaxels_x", "spaxels_y", "spaxel_scale"},
         )
-        modes[name] = SpatialMode(
+        scales[name] = Scale(
             name=name,
             spaxels_x=_positive_int(values["spaxels_x"], f"{section_name}.spaxels_x"),
             spaxels_y=_positive_int(values["spaxels_y"], f"{section_name}.spaxels_y"),
@@ -329,27 +342,52 @@ def _load_spatial_modes(
             )
             * u.mas,
         )
-    return modes
+    return scales
 
 
-def _load_spectral_modes(
+def _load_dispersers(
     parser: configparser.ConfigParser,
-) -> dict[str, SpectralMode]:
-    modes: dict[str, SpectralMode] = {}
+) -> tuple[dict[str, Disperser], frozenset[str]]:
+    section_values: dict[str, dict[str, str]] = {}
+    section_names: dict[str, str] = {}
     for section_name in parser.sections():
-        if not section_name.startswith("spectral_mode."):
+        if not section_name.startswith("disperser."):
             continue
-        name = section_name.removeprefix("spectral_mode.")
-        values = _section(
+        name = section_name.removeprefix("disperser.")
+        section_names[name] = section_name
+        section_values[name] = _section(
             parser,
             section_name,
-            required={
-                "resolving_power",
-                "pixels_per_resolution_element",
-                "wavelength_min",
-                "wavelength_max",
-            },
+            required=set(),
+            optional=_DISPERSER_KEYS,
         )
+
+    scopes = frozenset(section_values)
+    for name, section_name in section_names.items():
+        for ancestor in _name_ancestors(name)[:-1]:
+            if ancestor not in scopes:
+                raise ValueError(
+                    f"[{section_name}] requires parent section "
+                    f"[disperser.{ancestor}]."
+                )
+
+    leaf_names = [
+        name
+        for name in section_values
+        if not any(other.startswith(f"{name}.") for other in section_values)
+    ]
+    dispersers: dict[str, Disperser] = {}
+    for name in leaf_names:
+        section_name = section_names[name]
+        values: dict[str, str] = {}
+        for ancestor in _name_ancestors(name):
+            values.update(section_values[ancestor])
+        missing = _DISPERSER_KEYS.difference(values)
+        if missing:
+            raise ValueError(
+                f"[{section_name}] is missing required keys after inheritance: "
+                f"{sorted(missing)}"
+            )
         wavelength_min = _positive_float(
             values["wavelength_min"], f"{section_name}.wavelength_min"
         ) * u.micron
@@ -360,7 +398,7 @@ def _load_spectral_modes(
             raise ValueError(
                 f"[{section_name}] wavelength_max must exceed wavelength_min."
             )
-        modes[name] = SpectralMode(
+        dispersers[name] = Disperser(
             name=name,
             resolving_power=_positive_float(
                 values["resolving_power"], f"{section_name}.resolving_power"
@@ -372,17 +410,17 @@ def _load_spectral_modes(
             wavelength_min=wavelength_min,
             wavelength_max=wavelength_max,
         )
-    return modes
+    return dispersers, scopes
 
 
-def _load_atmosphere_modes(
+def _load_atmospheres(
     parser: configparser.ConfigParser, root: Path
-) -> dict[str, AtmosphereMode]:
-    modes: dict[str, AtmosphereMode] = {}
+) -> dict[str, Atmosphere]:
+    atmospheres: dict[str, Atmosphere] = {}
     for section_name in parser.sections():
-        if not section_name.startswith("atmosphere_mode."):
+        if not section_name.startswith("atmosphere."):
             continue
-        name = section_name.removeprefix("atmosphere_mode.")
+        name = section_name.removeprefix("atmosphere.")
         values = _section(
             parser,
             section_name,
@@ -390,7 +428,7 @@ def _load_atmosphere_modes(
         )
         transmission_path = _resolve_reference(root, values["transmission_file"])
         background_path = _resolve_reference(root, values["background_file"])
-        modes[name] = AtmosphereMode(
+        atmospheres[name] = Atmosphere(
             name=name,
             pwv=_positive_float(values["pwv"], f"{section_name}.pwv") * u.mm,
             airmass=_positive_float(values["airmass"], f"{section_name}.airmass"),
@@ -409,23 +447,24 @@ def _load_atmosphere_modes(
                 uniform=True,
             ),
         )
-    return modes
+    return atmospheres
 
 
 def _load_optical_components(
     parser: configparser.ConfigParser,
-    spectral_modes: dict[str, SpectralMode],
+    disperser_scopes: frozenset[str],
 ) -> tuple[OpticalComponent, ...]:
     components: list[OpticalComponent] = []
     for section_name in parser.sections():
-        if not section_name.startswith("optical_component."):
+        if not section_name.startswith("optics."):
             continue
         parts = section_name.split(".")
-        spectral_mode = parts[1] if len(parts) == 3 else None
-        name = parts[-1]
-        if spectral_mode is not None and spectral_mode not in spectral_modes:
+        name = parts[1]
+        disperser_scope = ".".join(parts[2:]) if len(parts) > 2 else None
+        if disperser_scope is not None and disperser_scope not in disperser_scopes:
             raise ValueError(
-                f"[{section_name}] refers to unknown spectral mode {spectral_mode!r}."
+                f"[{section_name}] refers to unknown disperser scope "
+                f"{disperser_scope!r}."
             )
         values = _section(
             parser,
@@ -448,7 +487,7 @@ def _load_optical_components(
         components.append(
             OpticalComponent(
                 name=name,
-                spectral_mode=spectral_mode,
+                disperser_scope=disperser_scope,
                 order=_integer(values["order"], f"{section_name}.order"),
                 throughput=_bounded_float(
                     values["throughput"], f"{section_name}.throughput"
@@ -458,6 +497,11 @@ def _load_optical_components(
             )
         )
     return tuple(components)
+
+
+def _name_ancestors(name: str) -> tuple[str, ...]:
+    parts = name.split(".")
+    return tuple(".".join(parts[:index]) for index in range(1, len(parts) + 1))
 
 
 def _resolve_reference(root: Path, value: str) -> Path:
@@ -540,23 +584,23 @@ def _table_quantity(
     return quantity
 
 
-def _validate_coverage(table: SpectralTable, mode: SpectralMode) -> None:
+def _validate_coverage(table: SpectralTable, disperser: Disperser) -> None:
     if (
-        table.wavelength[0] > mode.wavelength_min
-        or table.wavelength[-1] < mode.wavelength_max
+        table.wavelength[0] > disperser.wavelength_min
+        or table.wavelength[-1] < disperser.wavelength_max
     ):
         raise ValueError(
-            f"{table.path} does not cover spectral mode {mode.name!r} "
-            f"({mode.wavelength_min} to {mode.wavelength_max})."
+            f"{table.path} does not cover disperser {disperser.name!r} "
+            f"({disperser.wavelength_min} to {disperser.wavelength_max})."
         )
 
 
-def _select_mode(kind: str, name: str, modes: dict[str, _Mode]) -> _Mode:
+def _select_option(kind: str, name: str, options: dict[str, _Option]) -> _Option:
     try:
-        return modes[name]
+        return options[name]
     except KeyError as exc:
         raise ValueError(
-            f"Unknown {kind} mode {name!r}; available modes: {sorted(modes)}"
+            f"Unknown {kind} {name!r}; available options: {sorted(options)}"
         ) from exc
 
 
@@ -564,7 +608,7 @@ def _validate_name(name: str, section: str) -> None:
     if not _NAME_PATTERN.fullmatch(name):
         raise ValueError(
             f"Section [{section}] names must use lowercase ASCII letters, digits, "
-            "and underscores."
+            "hyphens, and underscores."
         )
 
 

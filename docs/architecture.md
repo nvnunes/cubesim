@@ -82,11 +82,12 @@ Keep ETC setup, data loading, validation, and compute clearly separated.
 The current setup lifecycle is:
 
 - construct `Etc` with an explicit instrument-data directory
-- select exact spatial, spectral, and atmosphere modes with `configure()`
+- select an exact scale, selectable disperser leaf, and atmosphere
+  with `configure()`
 - configure a direct PSF with `set_psf()`
 
-The current implementation provides construction, mode selection, and
-direct PSF input. The reserved `run()` entrypoint raises `NotImplementedError`
+The current implementation provides construction, instrument-option selection,
+and direct PSF input. The reserved `run()` entrypoint raises `NotImplementedError`
 because forward computation is not implemented.
 
 Preserve that lifecycle clarity as the repo grows. If a module has a strong

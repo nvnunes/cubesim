@@ -23,7 +23,7 @@ and scientific data are distributed separately from cubesim.
 ## INI Schema
 
 The configuration contains exactly one system, telescope, and detector
-section, at least one mode in each mode namespace, and zero or more optical
+section, at least one scale, disperser, and atmosphere, and zero or more optical
 components. Unknown sections and keys are rejected, and `[DEFAULT]` values are
 not permitted.
 
@@ -42,47 +42,55 @@ dark_current = 0.05
 light_leak = 0.01
 quantum_efficiency_file = qe.ecsv
 
-[spatial_mode.50mas]
+[scale.50mas]
 spaxels_x = 40
 spaxels_y = 40
 spaxel_scale = 50
 
-[spectral_mode.r3000_yj]
+[disperser.r3000]
 resolving_power = 3000
 pixels_per_resolution_element = 2
+
+[disperser.r3000.yj]
 wavelength_min = 0.95
 wavelength_max = 1.35
 
-[atmosphere_mode.pwv10_airmass10]
+[atmosphere.airmass10_pwv10]
 pwv = 1.0
 airmass = 1.0
 transmission_file = transmission.ecsv
 background_file = background.ecsv
 
-[optical_component.telescope]
+[optics.telescope]
 order = 1
 throughput = 0.9
 emissivity = 0.1
 temperature = 275
 
-[optical_component.r3000_yj.spectrograph]
+[optics.spectrograph.r3000]
 order = 2
 throughput = 0.7
 emissivity = 0.0
 ```
 
-Selectable section suffixes use lowercase ASCII letters, digits, and
-underscores. Callers select the exact names with `Etc.configure()`; there are
-no aliases, case folding, inferred defaults, prefixes, or nearest-mode
+Section-name segments use lowercase ASCII letters, digits, hyphens, and underscores.
+Scale and atmosphere names have one segment. Dispersers may form an
+explicit dotted hierarchy. A disperser section with children provides inherited
+defaults and is not selectable; leaf sections inherit parent values and may
+override them. Every parent in a leaf's dotted path must have its own section,
+and the resolved leaf must define all required disperser fields. Flat dispersers
+remain valid. Callers select the exact leaf name with `Etc.configure()`; there
+are no aliases, case folding, inferred parents, or nearest-option
 fallbacks.
 
 Detector QE uses exactly one of `quantum_efficiency`, for a constant value, or
-`quantum_efficiency_file`. Universal optical components use
-`[optical_component.<name>]`; components limited to one spectral mode use
-`[optical_component.<spectral_mode>.<name>]`. The selected path combines both
-sets and sorts them by the required, unique `order`. Component names must also
-be unique in the selected path. A component with nonzero emissivity requires a
-temperature.
+`quantum_efficiency_file`. Universal optics use `[optics.<name>]`; scoped
+optics use `[optics.<name>.<disperser_scope>]`, where the scope is a declared
+disperser section. A scoped element applies to every selectable leaf at or
+below that section. The selected path combines universal and applicable scoped
+elements and sorts them by the required, unique `order`. Element names must
+also be unique in the selected path. An element with nonzero emissivity
+requires a temperature.
 
 ## INI Units
 
@@ -110,7 +118,7 @@ primary diameter, and each wavelength maximum must exceed its minimum.
 Instrument tables use Astropy ECSV, contain exactly the two columns listed
 below, and declare units convertible to the canonical units. Wavelengths are
 finite, positive, unique, strictly increasing vacuum wavelengths. Every table
-contains at least two samples, and every table used by a selected mode must
+contains at least two samples, and every table used by a selected disperser must
 cover its full wavelength range.
 
 | Table | Value column | Canonical value unit | Value constraint |
@@ -126,6 +134,6 @@ relative tolerance of `1e-7`; extrapolation is not permitted.
 ## Data Boundary
 
 Cubesim owns parsing, validation, deterministic path resolution, canonical
-units, and selected-mode coverage checks. Dataset maintainers own scientific
+units, and selected-disperser coverage checks. Dataset maintainers own scientific
 provenance, calibration, licensing, access control, and consistency of the
 distributed values.

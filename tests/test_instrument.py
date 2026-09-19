@@ -12,35 +12,57 @@ from astropy.table import QTable
 import cubesim
 
 
-def test_configure_resolves_modes_and_ordered_optical_path(instrument_data) -> None:
+def test_configure_resolves_options_and_ordered_optical_path(instrument_data) -> None:
     etc = cubesim.Etc(instrument_data)
 
     etc.configure(
-        spatial_mode="50mas",
-        spectral_mode="r3000_yj",
-        atmosphere_mode="pwv10_airmass10",
+        scale="50mas",
+        disperser="r3000.yj",
+        atmosphere="airmass10_pwv10",
     )
 
     assert etc._selection is not None
-    assert etc._selection.spatial_mode.name == "50mas"
+    assert etc._selection.scale.name == "50mas"
+    assert etc._selection.disperser.name == "r3000.yj"
+    assert etc._selection.disperser.resolving_power == 3000
     assert [item.name for item in etc._selection.optical_components] == [
         "telescope",
         "spectrograph",
     ]
 
 
-def test_configure_rejects_unknown_exact_mode(instrument_data) -> None:
+def test_configure_rejects_unknown_exact_option(instrument_data) -> None:
     etc = cubesim.Etc(instrument_data)
 
     with pytest.raises(
         ValueError,
-        match=r"Unknown spatial mode '50MAS'; available modes: \['50mas'\]",
+        match=r"Unknown scale '50MAS'; available options: \['50mas'\]",
     ):
         etc.configure(
-            spatial_mode="50MAS",
-            spectral_mode="r3000_yj",
-            atmosphere_mode="pwv10_airmass10",
+            scale="50MAS",
+            disperser="r3000.yj",
+            atmosphere="airmass10_pwv10",
         )
+
+
+def test_configure_accepts_hyphenated_option_name(instrument_data) -> None:
+    config = instrument_data / "etc.ini"
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            "[scale.50mas]", "[scale.girmos-kmos]"
+        ),
+        encoding="utf-8",
+    )
+    etc = cubesim.Etc(instrument_data)
+
+    etc.configure(
+        scale="girmos-kmos",
+        disperser="r3000.yj",
+        atmosphere="airmass10_pwv10",
+    )
+
+    assert etc._selection is not None
+    assert etc._selection.scale.name == "girmos-kmos"
 
 
 def test_constructor_rejects_unknown_ini_key(instrument_data) -> None:
@@ -82,11 +104,11 @@ def test_configure_rejects_incomplete_table_coverage(instrument_data) -> None:
     )
     etc = cubesim.Etc(instrument_data)
 
-    with pytest.raises(ValueError, match="does not cover spectral mode"):
+    with pytest.raises(ValueError, match="does not cover disperser"):
         etc.configure(
-            spatial_mode="50mas",
-            spectral_mode="r3000_yj",
-            atmosphere_mode="pwv10_airmass10",
+            scale="50mas",
+            disperser="r3000.yj",
+            atmosphere="airmass10_pwv10",
         )
 
 
@@ -121,9 +143,9 @@ def test_constant_detector_qe_needs_no_qe_table_coverage(instrument_data) -> Non
     etc = cubesim.Etc(instrument_data)
 
     etc.configure(
-        spatial_mode="50mas",
-        spectral_mode="r3000_yj",
-        atmosphere_mode="pwv10_airmass10",
+        scale="50mas",
+        disperser="r3000.yj",
+        atmosphere="airmass10_pwv10",
     )
 
     assert etc._selection is not None
@@ -133,8 +155,8 @@ def test_configure_rejects_duplicate_component_order(instrument_data) -> None:
     config = instrument_data / "etc.ini"
     config.write_text(
         config.read_text(encoding="utf-8").replace(
-            "[optical_component.r3000_yj.spectrograph]\norder = 2",
-            "[optical_component.r3000_yj.spectrograph]\norder = 1",
+            "[optics.spectrograph.r3000]\norder = 2",
+            "[optics.spectrograph.r3000]\norder = 1",
         ),
         encoding="utf-8",
     )
@@ -142,10 +164,125 @@ def test_configure_rejects_duplicate_component_order(instrument_data) -> None:
 
     with pytest.raises(ValueError, match="duplicate order values"):
         etc.configure(
-            spatial_mode="50mas",
-            spectral_mode="r3000_yj",
-            atmosphere_mode="pwv10_airmass10",
+            scale="50mas",
+            disperser="r3000.yj",
+            atmosphere="airmass10_pwv10",
         )
+
+
+def test_disperser_group_is_not_selectable(instrument_data) -> None:
+    etc = cubesim.Etc(instrument_data)
+
+    with pytest.raises(
+        ValueError,
+        match=r"Unknown disperser 'r3000'; available options: \['r3000.yj'\]",
+    ):
+        etc.configure(
+            scale="50mas",
+            disperser="r3000",
+            atmosphere="airmass10_pwv10",
+        )
+
+
+def test_disperser_leaf_can_override_parent(instrument_data) -> None:
+    config = instrument_data / "etc.ini"
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            "[disperser.r3000.yj]\n",
+            "[disperser.r3000.yj]\nresolving_power = 3500\n",
+        ),
+        encoding="utf-8",
+    )
+    etc = cubesim.Etc(instrument_data)
+
+    etc.configure(
+        scale="50mas",
+        disperser="r3000.yj",
+        atmosphere="airmass10_pwv10",
+    )
+
+    assert etc._selection is not None
+    assert etc._selection.disperser.resolving_power == 3500
+
+
+def test_constructor_requires_explicit_disperser_parent(instrument_data) -> None:
+    config = instrument_data / "etc.ini"
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            "[disperser.r3000]", "[disperser.other]"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="requires parent section"):
+        cubesim.Etc(instrument_data)
+
+
+def test_constructor_rejects_incomplete_disperser_leaf(instrument_data) -> None:
+    config = instrument_data / "etc.ini"
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            "pixels_per_resolution_element = 2\n", ""
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="missing required keys after inheritance"):
+        cubesim.Etc(instrument_data)
+
+
+def test_constructor_rejects_unknown_optical_scope(instrument_data) -> None:
+    config = instrument_data / "etc.ini"
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            "[optics.spectrograph.r3000]",
+            "[optics.spectrograph.unknown]",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unknown disperser scope 'unknown'"):
+        cubesim.Etc(instrument_data)
+
+
+def test_flat_disperser_remains_supported(instrument_data) -> None:
+    config = instrument_data / "etc.ini"
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        .replace(
+            """\
+[disperser.r3000]
+resolving_power = 3000
+pixels_per_resolution_element = 2
+
+[disperser.r3000.yj]
+wavelength_min = 0.95
+wavelength_max = 1.35
+""",
+            """\
+[disperser.prism]
+resolving_power = 3000
+pixels_per_resolution_element = 2
+wavelength_min = 0.95
+wavelength_max = 1.35
+""",
+        )
+        .replace(
+            "[optics.spectrograph.r3000]",
+            "[optics.spectrograph.prism]",
+        ),
+        encoding="utf-8",
+    )
+    etc = cubesim.Etc(instrument_data)
+
+    etc.configure(
+        scale="50mas",
+        disperser="prism",
+        atmosphere="airmass10_pwv10",
+    )
+
+    assert etc._selection is not None
+    assert etc._selection.disperser.name == "prism"
 
 
 def test_constructor_requires_etc_ini(tmp_path: Path) -> None:

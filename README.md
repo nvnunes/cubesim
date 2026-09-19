@@ -4,8 +4,8 @@
 spectrographs.
 
 The current implementation loads and validates an instrument-data directory,
-selects its observing modes, and accepts a direct PSF. The forward ETC
-calculation is not implemented yet.
+selects its scale, disperser, and atmosphere, and accepts a direct PSF. The
+forward ETC calculation is not implemented yet.
 
 Its intended calculation scope is:
 
@@ -31,9 +31,9 @@ import cubesim
 
 etc = cubesim.Etc("/path/to/instrument-data")
 etc.configure(
-    spatial_mode="50mas",
-    spectral_mode="r3000_yj",
-    atmosphere_mode="pwv10_airmass10",
+    scale="50mas",
+    disperser="r3000.yj",
+    atmosphere="airmass10_pwv10",
 )
 etc.set_psf("psf.npy", pixel_scale=10 * u.mas)
 ```

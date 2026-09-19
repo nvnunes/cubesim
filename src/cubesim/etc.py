@@ -25,16 +25,16 @@ class Etc:
     def configure(
         self,
         *,
-        spatial_mode: str,
-        spectral_mode: str,
-        atmosphere_mode: str,
+        scale: str,
+        disperser: str,
+        atmosphere: str,
     ) -> None:
-        """Select one exact spatial, spectral, and atmosphere mode."""
+        """Select exact scale, disperser-leaf, and atmosphere names."""
 
         self._selection = self._instrument.select(
-            spatial_mode=spatial_mode,
-            spectral_mode=spectral_mode,
-            atmosphere_mode=atmosphere_mode,
+            scale=scale,
+            disperser=disperser,
+            atmosphere=atmosphere,
         )
 
     def set_psf(

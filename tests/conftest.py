@@ -45,30 +45,32 @@ dark_current = 0.05
 light_leak = 0.01
 quantum_efficiency_file = qe.ecsv
 
-[spatial_mode.50mas]
+[scale.50mas]
 spaxels_x = 40
 spaxels_y = 30
 spaxel_scale = 50
 
-[spectral_mode.r3000_yj]
+[disperser.r3000]
 resolving_power = 3000
 pixels_per_resolution_element = 2
+
+[disperser.r3000.yj]
 wavelength_min = 0.95
 wavelength_max = 1.35
 
-[atmosphere_mode.pwv10_airmass10]
+[atmosphere.airmass10_pwv10]
 pwv = 1.0
 airmass = 1.0
 transmission_file = transmission.ecsv
 background_file = background.ecsv
 
-[optical_component.telescope]
+[optics.telescope]
 order = 1
 throughput = 0.9
 emissivity = 0.1
 temperature = 275
 
-[optical_component.r3000_yj.spectrograph]
+[optics.spectrograph.r3000]
 order = 2
 throughput = 0.7
 emissivity = 0.0
