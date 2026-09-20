@@ -106,15 +106,32 @@ def calculate(
         )
         * _MODEL_UNIT,
     )
+    transmission = _smooth_table(
+        selection.atmosphere.transmission,
+        grid,
+        sigma_divisor=1.0,
+    )
+    sky = _smooth_background(selection.atmosphere.background, grid)
+    sky_radiance = (
+        sky
+        * grid.photon_energy.value
+        / _ARCSEC2_TO_SR
+        * 1.0e6
+        * u.W
+        / (u.m**2 * u.sr * u.m)
+    )
     models = Models(
         targets=tuple(target.models for target in target_models),
         combined=combined,
+        transmission=transmission,
+        sky=sky_radiance,
+        thermal=_thermal_background(selection, grid.wavelength),
     )
     signals, variances, snr = _detector_products(
         instrument,
         selection,
         grid,
-        combined,
+        models,
         exposure,
         sky_subtraction,
     )
@@ -1073,38 +1090,24 @@ def _detector_products(
     instrument: InstrumentDefinition,
     selection: InstrumentSelection,
     grid: SpectralGrid,
-    model: u.Quantity,
+    models: Models,
     exposure: Any,
     sky_subtraction: Any,
 ) -> tuple[Signals, Variances, np.ndarray]:
+    model = models.combined
     shape = model.shape
     if not np.isfinite(model.value).all():
         raise ValueError("Target model contains non-finite values.")
-    transmission = _smooth_table(
-        selection.atmosphere.transmission,
-        grid,
-        sigma_divisor=1.0,
-    )
-    sky = _smooth_background(selection.atmosphere.background, grid)
     qe = _quantum_efficiency(instrument, grid)
     throughput = 1.0
     for component in selection.optical_components:
         throughput *= component.throughput
-    thermal = _thermal_background(selection, grid.wavelength)
     etendue = _etendue(instrument, selection.scale.spaxel_scale)
 
     target_radiance = model.to(u.W / (u.m**2 * u.sr * u.m))
-    sky_radiance_1d = (
-        sky
-        * grid.photon_energy.value
-        / _ARCSEC2_TO_SR
-        * 1.0e6
-        * u.W
-        / (u.m**2 * u.sr * u.m)
-    )
-    sky_radiance = _cube(sky_radiance_1d, shape)
-    thermal_radiance = _cube(thermal, shape)
-    transmission_cube = _cube(transmission, shape)
+    sky_radiance = _cube(models.sky, shape)
+    thermal_radiance = _cube(models.thermal, shape)
+    transmission_cube = _cube(models.transmission, shape)
     qe_cube = _cube(qe, shape)
     photon_energy = _cube(grid.photon_energy, shape)
 

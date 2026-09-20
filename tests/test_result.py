@@ -27,6 +27,9 @@ def test_pickle_round_trips_complete_result(instrument_data, tmp_path) -> None:
     assert restored.options.scale == result.options.scale
     assert restored.options.exposure == result.options.exposure
     assert restored.apertures[0].name == "line"
+    assert np.array_equal(restored.models.transmission, result.models.transmission)
+    assert np.array_equal(restored.models.sky, result.models.sky)
+    assert np.array_equal(restored.models.thermal, result.models.thermal)
     with pytest.raises(ValueError, match="read-only"):
         restored.data[0, 0, 0, 0] = 0 * u.electron
     with pytest.raises(FileExistsError):
@@ -49,6 +52,9 @@ def test_fits_stores_datacubes_metadata_masks_and_apertures(
             "WAVELEN",
             "SNR",
             "MODEL",
+            "TRANSMIS",
+            "SKYMODEL",
+            "THERMAL",
             "SIGTARG",
             "SIGSKY",
             "SIGTHERM",
@@ -69,6 +75,9 @@ def test_fits_stores_datacubes_metadata_masks_and_apertures(
         assert hdus[0].header["NSKY"] == 2
         assert hdus[0].header["NCUBES"] == 2
         assert hdus["SNR"].header["BUNIT"] == "1"
+        assert hdus["TRANSMIS"].header["BUNIT"] == "1"
+        assert hdus["SKYMODEL"].header["BUNIT"] == "W sr-1 m-3"
+        assert hdus["THERMAL"].header["BUNIT"] == "W sr-1 m-3"
         assert hdus["SIGTARG"].header["BUNIT"] == "electron"
         assert hdus["VARTOTAL"].header["BUNIT"] == "electron2"
         assert hdus["SNR"].header["CTYPE2"] == "XOFFSET"
@@ -81,6 +90,9 @@ def test_fits_stores_datacubes_metadata_masks_and_apertures(
         assert hdus["SNR"].header["CD3_2"] == pytest.approx(pixel_scale * np.sin(angle))
         assert hdus["SNR"].header["CD3_3"] == pytest.approx(pixel_scale * np.cos(angle))
         assert hdus["SNR"].data.shape == result.snr.shape
+        assert hdus["TRANSMIS"].data.shape == result.wavelength.shape
+        assert hdus["SKYMODEL"].data.shape == result.wavelength.shape
+        assert hdus["THERMAL"].data.shape == result.wavelength.shape
         assert hdus["DATA"].data.shape == result.data.shape
         assert hdus["APMASK0"].data.sum() == 3
         assert hdus["APERTURE"].data["NAME"][0].rstrip() == "line"

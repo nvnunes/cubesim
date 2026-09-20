@@ -210,8 +210,9 @@ result = etc.run(
 )
 ```
 
-- `include_models` adds per-target high- and low-resolution model components
-  and the combined detector-resolution target cube.
+- `include_models` adds per-target high- and low-resolution model components,
+  the combined detector-resolution target cube, and the transmission, sky, and
+  thermal models sampled on the detector wavelength grid.
 - `include_signals` adds target, sky, thermal, dark, background, and total
   detected signals.
 - `include_variances` adds target, sky, thermal, dark, read, and total detector

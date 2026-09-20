@@ -70,6 +70,12 @@ def test_run_returns_requested_groups_and_immutable_snapshot(instrument_data) ->
     assert result.signals.target.unit == u.electron
     assert result.variances.total.unit == u.electron**2
     assert result.models.combined.shape == result.snr.shape
+    assert result.models.transmission.shape == result.wavelength.shape
+    assert result.models.sky.shape == result.wavelength.shape
+    assert result.models.thermal.shape == result.wavelength.shape
+    radiance = u.W / (u.m**2 * u.sr * u.m)
+    assert result.models.sky.unit == radiance
+    assert result.models.thermal.unit == radiance
     assert len(result.models.targets) == 1
     assert result.options.exposure.n == 4
     assert result.options.exposure.n_target == 2
@@ -86,6 +92,12 @@ def test_run_returns_requested_groups_and_immutable_snapshot(instrument_data) ->
         result.options.targets[0].spectrum.wavelength[0] = 1.2 * u.micron
     with pytest.raises(ValueError, match="read-only"):
         result.apertures[0].data[0] = 0 * u.electron
+    with pytest.raises(ValueError, match="read-only"):
+        result.models.transmission[0] = 0
+    with pytest.raises(ValueError, match="read-only"):
+        result.models.sky[0] = 0 * result.models.sky.unit
+    with pytest.raises(ValueError, match="read-only"):
+        result.models.thermal[0] = 0 * result.models.thermal.unit
     with pytest.raises(AttributeError, match="immutable"):
         result.data = result.data
 

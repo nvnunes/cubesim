@@ -41,16 +41,22 @@ With `include_models=True`, `result.models` contains:
 - `targets`: one entry per configured target
 - `combined`: the single detector-resolution target cube formed from all
   targets after spatial and spectral processing
+- `transmission`: dimensionless atmospheric transmission on the detector
+  wavelength grid
+- `sky`: atmospheric sky spectral radiance on the detector wavelength grid
+- `thermal`: instrument thermal spectral radiance on the detector wavelength
+  grid
 
 Each target has `high` and `low` model grids. A model grid contains
 `wavelength`, `spatial`, `spectrum`, and optional `velocity` components.
 Convolved high-resolution spatial and spectral components are also retained
 when those operations apply.
 
-`models.combined` is the model that feeds the detector calculation. The signal
-products described below are detected electrons after atmosphere, collecting
-area, throughput, QE, and exposure accounting; they are not duplicate model
-products.
+`models.combined`, `models.transmission`, `models.sky`, and `models.thermal`
+are the models that feed the detector calculation. The sky and thermal models
+have units of spectral radiance. The signal products described below are
+detected electrons after atmosphere, collecting area, throughput, QE, and
+exposure accounting; they are not duplicate model products.
 
 ## Signals
 
@@ -111,9 +117,9 @@ format as coupled to compatible Python, dependency, and CubeSim versions.
 
 `.fits`, `.fit`, and `.fts` store portable science datacubes and interpretive
 metadata. Every FITS result contains wavelength and S/N image extensions.
-Requested combined-model, signal, variance, and noisy-data cubes are included
-when present. Sky masks and aperture products are also included when
-configured.
+Requested combined-target, transmission, sky, thermal, signal, variance, and
+noisy-data products are included when present. Sky masks and aperture products
+are also included when configured.
 
 Image units are written in FITS metadata. Cube WCS uses celestial coordinates
 when `set_pointing(center=...)` supplied an absolute center and angular offsets
@@ -147,6 +153,9 @@ The image and table extension layout is:
 | `WAVELEN` | always | Detector wavelength coordinate |
 | `SNR` | always | Signal-to-noise cube |
 | `MODEL` | `include_models` | Combined detector-resolution target model |
+| `TRANSMIS` | `include_models` | Atmospheric transmission model |
+| `SKYMODEL` | `include_models` | Atmospheric sky spectral-radiance model |
+| `THERMAL` | `include_models` | Instrument thermal spectral-radiance model |
 | `SIGTARG` | `include_signals` | Target signal |
 | `SIGSKY` | `include_signals` | Atmospheric sky signal |
 | `SIGTHERM` | `include_signals` | Thermal signal |

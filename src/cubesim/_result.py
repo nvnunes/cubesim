@@ -68,6 +68,9 @@ class TargetModels:
 class Models:
     targets: tuple[TargetModels, ...]
     combined: u.Quantity
+    transmission: np.ndarray
+    sky: u.Quantity
+    thermal: u.Quantity
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,7 +271,13 @@ def readonly_models(models: Models) -> Models:
         )
         for target in models.targets
     )
-    return Models(targets=targets, combined=_readonly_quantity(models.combined))
+    return Models(
+        targets=targets,
+        combined=_readonly_quantity(models.combined),
+        transmission=_readonly_array(models.transmission),
+        sky=_readonly_quantity(models.sky),
+        thermal=_readonly_quantity(models.thermal),
+    )
 
 
 def readonly_signals(signals: Signals) -> Signals:
@@ -417,6 +426,16 @@ def _fits_hdus(result: EtcResult) -> list[Any]:
     if hasattr(result, "models"):
         hdus.append(
             _image_hdu("MODEL", result.models.combined, header=_cube_wcs(result))
+        )
+        hdus.extend(
+            (
+                _image_hdu(
+                    "TRANSMIS",
+                    result.models.transmission * u.dimensionless_unscaled,
+                ),
+                _image_hdu("SKYMODEL", result.models.sky),
+                _image_hdu("THERMAL", result.models.thermal),
+            )
         )
     if hasattr(result, "signals"):
         for name, field in (

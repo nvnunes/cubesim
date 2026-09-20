@@ -73,6 +73,8 @@ Direct PSF paths may be absolute or relative to the instrument-data directory.
 `result.snr`, `result.wavelength`, and `result.options` are always present.
 Pass `include_models`, `include_signals`, `include_variances`, or
 `include_data` to `run()` for the corresponding optional immutable groups.
+The model group includes the target models and the detector-grid atmospheric
+transmission, sky-radiance, and thermal-radiance models.
 Call `result.save("result.pkl")` for a complete trusted Python round trip or
 `result.save("result.fits")` for portable datacubes, metadata, masks, aperture
 measurements, units, and WCS.

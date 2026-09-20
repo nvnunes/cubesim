@@ -366,7 +366,8 @@ class Etc:
 
         Args:
             include_models: Include per-target high- and low-resolution model
-                components and their combined detector-resolution cube.
+                components, their combined detector-resolution cube, and the
+                wavelength-grid transmission, sky, and thermal models.
             include_signals: Include target, background-component, and total
                 detected electron cubes.
             include_variances: Include detector variance-component cubes.
