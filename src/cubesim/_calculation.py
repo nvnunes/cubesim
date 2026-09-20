@@ -1132,7 +1132,6 @@ def _detector_products(
     thermal_rate = (
         thermal_radiance * etendue * grid.step.to(u.m) * qe_cube / photon_energy
     ).to(1 / u.s)
-    thermal_rate += instrument.detector.light_leak.to_value(u.electron / u.s) / u.s
 
     target = target_rate * exposure.n_target * exposure.time * u.electron
     sky_signal = sky_rate * exposure.n_target * exposure.time * u.electron
@@ -1428,7 +1427,14 @@ def _reduce_aperture(
     return ApertureResult(
         name=aperture.name,
         mask=mask,
-        snr=target.value / np.sqrt(total_variance.value),
+        snr=float(
+            np.divide(
+                target.value,
+                np.sqrt(total_variance.value),
+                out=np.zeros_like(target.value, dtype=float),
+                where=total_variance.value > 0,
+            )
+        ),
         spectra=spectra,
         maps=maps,
         signals=reduced_signals,
@@ -1491,8 +1497,8 @@ def _projected_snr(
     support: np.ndarray,
 ) -> np.ndarray:
     snr = np.zeros(target.shape, dtype=float)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        snr[support] = target.value[support] / np.sqrt(total_variance.value[support])
+    valid = support & (total_variance.value > 0)
+    snr[valid] = target.value[valid] / np.sqrt(total_variance.value[valid])
     return snr
 
 
@@ -1653,14 +1659,10 @@ def _in_field_aperture_variance_spectrum(
 ) -> np.ndarray:
     sky_count = int(sky_mask.sum())
     aperture_count = aperture_mask.sum(axis=(0, 1))
-    aperture_variance = np.where(aperture_mask, raw_variance, 0.0).sum(
-        axis=(0, 1)
-    )
-    estimator_variance = raw_variance[sky_mask].sum(axis=0) / sky_count**2
-    overlap = aperture_mask & sky_mask[:, :, None]
-    covariance = np.where(overlap, raw_variance, 0.0).sum(axis=(0, 1)) / sky_count
-    return (
-        aperture_variance
-        + aperture_count**2 * estimator_variance
-        - 2 * aperture_count * covariance
+    weights = aperture_mask.astype(float) - (
+        aperture_count[None, None, :] / sky_count
+    ) * sky_mask[:, :, None]
+    return np.sum(
+        weights**2 * raw_variance,
+        axis=(0, 1),
     )

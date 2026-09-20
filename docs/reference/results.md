@@ -80,7 +80,7 @@ With `include_signals=True`, `result.signals` contains electron cubes:
 | `target` | Detected target electrons |
 | `sky` | Detected atmospheric sky electrons |
 | `thermal` | Detected thermal electrons |
-| `dark` | Detector dark and light-leak electrons |
+| `dark` | Detector dark-current electrons |
 | `background` | `sky + thermal + dark` |
 | `total` | `target + background` |
 
@@ -191,13 +191,13 @@ The image and table extension layout is:
 | `SIGTARG` | `include_signals` | Target signal |
 | `SIGSKY` | `include_signals` | Atmospheric sky signal |
 | `SIGTHERM` | `include_signals` | Thermal signal |
-| `SIGDARK` | `include_signals` | Dark and light-leak signal |
+| `SIGDARK` | `include_signals` | Dark-current signal |
 | `SIGBKG` | `include_signals` | Combined background signal |
 | `SIGTOTAL` | `include_signals` | Total detected signal |
 | `VARTARG` | `include_variances` | Target variance |
 | `VARSKY` | `include_variances` | Atmospheric sky variance |
 | `VARTHERM` | `include_variances` | Thermal variance |
-| `VARDARK` | `include_variances` | Dark and light-leak variance |
+| `VARDARK` | `include_variances` | Dark-current variance |
 | `VARREAD` | `include_variances` | Read variance |
 | `VARTOTAL` | `include_variances` | Total variance |
 | `DATA` | `include_data` | Noisy sky-subtracted detector data |

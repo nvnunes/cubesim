@@ -41,8 +41,7 @@ f_number = 16.0
 
 [detector]
 read_noise = 5.0
-dark_current = 0.05
-light_leak = 0.01
+dark_current = 0.06
 quantum_efficiency_file = qe.ecsv
 
 [scale.50mas]

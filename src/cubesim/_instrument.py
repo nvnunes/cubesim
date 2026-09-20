@@ -43,7 +43,6 @@ class TelescopeDefinition:
 class DetectorDefinition:
     read_noise: u.Quantity
     dark_current: u.Quantity
-    light_leak: u.Quantity
     quantum_efficiency: float | None
     quantum_efficiency_table: SpectralTable | None
 
@@ -278,8 +277,11 @@ def _load_detector(
     values = _section(
         parser,
         "detector",
-        required={"read_noise", "dark_current", "light_leak"},
-        optional={"quantum_efficiency", "quantum_efficiency_file"},
+        required={"read_noise", "dark_current"},
+        optional={
+            "quantum_efficiency",
+            "quantum_efficiency_file",
+        },
     )
     qe_keys = {"quantum_efficiency", "quantum_efficiency_file"}.intersection(values)
     if len(qe_keys) != 1:
@@ -310,9 +312,6 @@ def _load_detector(
         dark_current=_nonnegative_float(
             values["dark_current"], "detector.dark_current"
         )
-        * u.electron
-        / u.s,
-        light_leak=_nonnegative_float(values["light_leak"], "detector.light_leak")
         * u.electron
         / u.s,
         quantum_efficiency=qe,

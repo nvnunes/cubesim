@@ -39,7 +39,6 @@ f_number = 16.0
 [detector]
 read_noise = 5.0
 dark_current = 0.05
-light_leak = 0.01
 quantum_efficiency_file = qe.ecsv
 
 [scale.50mas]
@@ -105,7 +104,7 @@ INI values do not carry unit strings. Their units are fixed by the schema.
 | `pwv` | mm |
 | `temperature` | K |
 | `read_noise` | electron per pixel per read |
-| `dark_current`, `light_leak` | electron per pixel per second |
+| `dark_current` | electron per pixel per second |
 
 Diameters, f-number, spaxel counts, scales, resolving power,
 pixels-per-resolution-element, PWV, airmass, and temperature are positive.
