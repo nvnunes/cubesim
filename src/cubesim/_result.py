@@ -93,10 +93,56 @@ class Variances:
     total: u.Quantity
 
 
+class ApertureProjection:
+    """One immutable aperture reduction retaining wavelength or position."""
+
+    __slots__ = ("__dict__", "_locked", "snr")
+
+    def __init__(
+        self,
+        *,
+        snr: np.ndarray,
+        signals: Signals | None = None,
+        variances: Variances | None = None,
+    ) -> None:
+        object.__setattr__(self, "_locked", False)
+        self.snr = _readonly_array(snr)
+        if signals is not None:
+            self.signals = readonly_signals(signals)
+        if variances is not None:
+            self.variances = readonly_variances(variances)
+        object.__setattr__(self, "_locked", True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if getattr(self, "_locked", False):
+            raise AttributeError("Aperture projections are immutable.")
+        object.__setattr__(self, name, value)
+
+    def __getstate__(self) -> dict[str, Any]:
+        return {"snr": self.snr, **self.__dict__}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        object.__setattr__(self, "_locked", False)
+        object.__setattr__(self, "snr", _readonly_array(state.pop("snr")))
+        if "signals" in state:
+            object.__setattr__(
+                self,
+                "signals",
+                readonly_signals(state.pop("signals")),
+            )
+        if "variances" in state:
+            object.__setattr__(
+                self,
+                "variances",
+                readonly_variances(state.pop("variances")),
+            )
+        object.__setattr__(self, "_locked", True)
+
+
 class ApertureResult:
     """One immutable registered-aperture reduction."""
 
-    __slots__ = ("__dict__", "_locked", "mask", "name", "snr")
+    __slots__ = ("__dict__", "_locked", "maps", "mask", "name", "snr", "spectra")
 
     def __init__(
         self,
@@ -104,6 +150,8 @@ class ApertureResult:
         name: str,
         mask: np.ndarray,
         snr: float,
+        spectra: ApertureProjection,
+        maps: ApertureProjection,
         signals: Any | None = None,
         variances: Any | None = None,
         data: Any | None = None,
@@ -112,6 +160,8 @@ class ApertureResult:
         self.name = name
         self.mask = _readonly_array(mask)
         self.snr = float(snr)
+        self.spectra = readonly_aperture_projection(spectra)
+        self.maps = readonly_aperture_projection(maps)
         if signals is not None:
             self.signals = readonly_signals(signals)
         if variances is not None:
@@ -130,6 +180,8 @@ class ApertureResult:
             "name": self.name,
             "mask": self.mask,
             "snr": self.snr,
+            "spectra": self.spectra,
+            "maps": self.maps,
             **self.__dict__,
         }
 
@@ -138,6 +190,16 @@ class ApertureResult:
         object.__setattr__(self, "name", state.pop("name"))
         object.__setattr__(self, "mask", _readonly_array(state.pop("mask")))
         object.__setattr__(self, "snr", float(state.pop("snr")))
+        object.__setattr__(
+            self,
+            "spectra",
+            readonly_aperture_projection(state.pop("spectra")),
+        )
+        object.__setattr__(
+            self,
+            "maps",
+            readonly_aperture_projection(state.pop("maps")),
+        )
         if "signals" in state:
             object.__setattr__(
                 self,
@@ -182,6 +244,8 @@ class EtcResult:
         signals: Signals | None = None,
         variances: Variances | None = None,
         data: u.Quantity | None = None,
+        psf: np.ndarray | None = None,
+        psf_pixel_scale: u.Quantity | None = None,
     ) -> None:
         object.__setattr__(self, "_locked", False)
         self.snr = _readonly_array(snr)
@@ -196,6 +260,11 @@ class EtcResult:
             self.variances = variances
         if data is not None:
             self.data = _readonly_quantity(data)
+        if (psf is None) != (psf_pixel_scale is None):
+            raise ValueError("PSF data and pixel scale must be provided together.")
+        if psf is not None:
+            self.psf = _readonly_array(psf)
+            self.psf_pixel_scale = _readonly_quantity(psf_pixel_scale)
         object.__setattr__(self, "_locked", True)
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -241,6 +310,13 @@ class EtcResult:
                 self,
                 "data",
                 _readonly_quantity(state.pop("data")),
+            )
+        if "psf" in state:
+            object.__setattr__(self, "psf", _readonly_array(state.pop("psf")))
+            object.__setattr__(
+                self,
+                "psf_pixel_scale",
+                _readonly_quantity(state.pop("psf_pixel_scale")),
             )
         object.__setattr__(self, "_locked", True)
 
@@ -295,6 +371,16 @@ def readonly_variances(variances: Variances) -> Variances:
             field: _readonly_quantity(getattr(variances, field))
             for field in Variances.__dataclass_fields__
         }
+    )
+
+
+def readonly_aperture_projection(
+    projection: ApertureProjection,
+) -> ApertureProjection:
+    return ApertureProjection(
+        snr=projection.snr,
+        signals=getattr(projection, "signals", None),
+        variances=getattr(projection, "variances", None),
     )
 
 
@@ -469,6 +555,17 @@ def _fits_hdus(result: EtcResult) -> list[Any]:
             )
     if hasattr(result, "data"):
         hdus.append(_image_hdu("DATA", result.data, header=_data_wcs(result)))
+    if hasattr(result, "psf"):
+        psf_header = fits.Header(
+            {"PIXSCALE": result.psf_pixel_scale.to_value(u.mas)}
+        )
+        hdus.append(
+            _image_hdu(
+                "PSF",
+                result.psf * u.dimensionless_unscaled,
+                header=psf_header,
+            )
+        )
     if result.options.sky_subtraction.mask is not None:
         hdus.append(
             fits.ImageHDU(
@@ -485,6 +582,7 @@ def _fits_hdus(result: EtcResult) -> list[Any]:
                 name=f"APMASK{index}",
             )
         )
+        hdus.extend(_aperture_projection_hdus(result, aperture, index))
     if result.apertures:
         hdus.append(_aperture_table(result.apertures))
     return hdus
@@ -617,6 +715,78 @@ def _aperture_table(apertures: tuple[ApertureResult, ...]) -> fits.BinTableHDU:
             )
         )
     return fits.BinTableHDU.from_columns(columns, name="APERTURE")
+
+
+def _aperture_projection_hdus(
+    result: EtcResult,
+    aperture: ApertureResult,
+    index: int,
+) -> list[fits.ImageHDU]:
+    hdus: list[fits.ImageHDU] = []
+    for label, projection, wcs in (
+        ("SPEC", aperture.spectra, _spectral_wcs(result)),
+        ("MAP", aperture.maps, _spatial_wcs(result)),
+    ):
+        base_header = wcs.copy()
+        base_header["APINDEX"] = index
+        base_header["APNAME"] = aperture.name
+        base_header["APVIEW"] = label
+        hdus.append(
+            _image_hdu(
+                f"AP{index}{label}SNR",
+                projection.snr * u.dimensionless_unscaled,
+                header=base_header,
+            )
+        )
+        for group_name, prefix in (("signals", "SIG"), ("variances", "VAR")):
+            if not hasattr(projection, group_name):
+                continue
+            group = getattr(projection, group_name)
+            for field in type(group).__dataclass_fields__:
+                field_header = base_header.copy()
+                field_header["APFIELD"] = field
+                hdus.append(
+                    _image_hdu(
+                        f"AP{index}{label}{prefix}{field.upper()}",
+                        getattr(group, field),
+                        header=field_header,
+                    )
+                )
+    return hdus
+
+
+def _spectral_wcs(result: EtcResult) -> fits.Header:
+    wavelength = result.wavelength.to_value(u.micron)
+    header = fits.Header()
+    header["WCSAXES"] = 1
+    header["CTYPE1"] = "WAVE"
+    header["CUNIT1"] = "um"
+    header["CRPIX1"] = 1.0
+    header["CRVAL1"] = wavelength[0]
+    header["CDELT1"] = wavelength[1] - wavelength[0]
+    return header
+
+
+def _spatial_wcs(result: EtcResult) -> fits.Header:
+    cube = _cube_wcs(result)
+    header = fits.Header()
+    header["WCSAXES"] = 2
+    for target, source in (
+        ("CTYPE1", "CTYPE2"),
+        ("CTYPE2", "CTYPE3"),
+        ("CUNIT1", "CUNIT2"),
+        ("CUNIT2", "CUNIT3"),
+        ("CRPIX1", "CRPIX2"),
+        ("CRPIX2", "CRPIX3"),
+        ("CRVAL1", "CRVAL2"),
+        ("CRVAL2", "CRVAL3"),
+        ("CD1_1", "CD2_2"),
+        ("CD1_2", "CD2_3"),
+        ("CD2_1", "CD3_2"),
+        ("CD2_2", "CD3_3"),
+    ):
+        header[target] = cube[source]
+    return header
 
 
 def _unit_string(unit: u.UnitBase) -> str:

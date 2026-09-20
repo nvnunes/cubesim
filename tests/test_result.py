@@ -27,6 +27,16 @@ def test_pickle_round_trips_complete_result(instrument_data, tmp_path) -> None:
     assert restored.options.scale == result.options.scale
     assert restored.options.exposure == result.options.exposure
     assert restored.apertures[0].name == "line"
+    assert np.array_equal(restored.psf, result.psf)
+    assert restored.psf_pixel_scale == result.psf_pixel_scale
+    assert np.array_equal(
+        restored.apertures[0].spectra.snr,
+        result.apertures[0].spectra.snr,
+    )
+    assert np.array_equal(
+        restored.apertures[0].maps.signals.target,
+        result.apertures[0].maps.signals.target,
+    )
     assert np.array_equal(restored.models.transmission, result.models.transmission)
     assert np.array_equal(restored.models.sky, result.models.sky)
     assert np.array_equal(restored.models.thermal, result.models.thermal)
@@ -47,7 +57,7 @@ def test_fits_stores_datacubes_metadata_masks_and_apertures(
     result.save(path)
 
     with fits.open(path, checksum=True) as hdus:
-        assert {hdu.name for hdu in hdus} == {
+        expected = {
             "PRIMARY",
             "WAVELEN",
             "SNR",
@@ -68,9 +78,20 @@ def test_fits_stores_datacubes_metadata_masks_and_apertures(
             "VARREAD",
             "VARTOTAL",
             "DATA",
+            "PSF",
             "APMASK0",
             "APERTURE",
         }
+        for view in ("SPEC", "MAP"):
+            expected.add(f"AP0{view}SNR")
+            for prefix, fields in (
+                ("SIG", result.apertures[0].signals.__dataclass_fields__),
+                ("VAR", result.apertures[0].variances.__dataclass_fields__),
+            ):
+                expected.update(
+                    f"AP0{view}{prefix}{field.upper()}" for field in fields
+                )
+        assert {hdu.name for hdu in hdus} == expected
         assert hdus[0].header["NTARGET"] == 2
         assert hdus[0].header["NSKY"] == 2
         assert hdus[0].header["NCUBES"] == 2
@@ -94,7 +115,14 @@ def test_fits_stores_datacubes_metadata_masks_and_apertures(
         assert hdus["SKYMODEL"].data.shape == result.wavelength.shape
         assert hdus["THERMAL"].data.shape == result.wavelength.shape
         assert hdus["DATA"].data.shape == result.data.shape
+        assert hdus["PSF"].data.shape == result.psf.shape
+        assert hdus["PSF"].header["PIXSCALE"] == pytest.approx(10.0)
         assert hdus["APMASK0"].data.sum() == 3
+        assert hdus["AP0SPECSNR"].data.shape == result.wavelength.shape
+        assert hdus["AP0MAPSNR"].data.shape == result.snr.shape[:2]
+        assert hdus["AP0SPECSIGTARGET"].header["BUNIT"] == "electron"
+        assert hdus["AP0MAPVARTOTAL"].header["BUNIT"] == "electron2"
+        assert hdus["AP0SPECSNR"].header["APNAME"] == "line"
         assert hdus["APERTURE"].data["NAME"][0].rstrip() == "line"
 
 

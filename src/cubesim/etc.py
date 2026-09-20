@@ -436,6 +436,8 @@ class Etc:
                 readonly_variances(output.variances) if include_variances else None
             ),
             data=output.data if include_data else None,
+            psf=psf.data if psf is not None else None,
+            psf_pixel_scale=psf.pixel_scale if psf is not None else None,
         )
 
     def _validate_and_resolve(

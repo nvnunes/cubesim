@@ -15,6 +15,19 @@ Every result contains:
 | `options` | Structured snapshot of resolved inputs | scalar object |
 | `apertures` | Registered aperture results | tuple |
 
+When a PSF is configured, the result also contains:
+
+| Attribute | Meaning | Shape |
+| --- | --- | --- |
+| `psf` | Centered, unit-normalized PSF used by the calculation | `(y_psf, x_psf)` |
+| `psf_pixel_scale` | Positive angular PSF pixel scale | scalar quantity |
+
+These attributes record resolved calculation input and do not depend on
+`include_models`. A calculation containing only uniform targets may omit a
+PSF; in that case, neither attribute is present. If a PSF is configured for a
+uniform-only calculation, it is retained in the result even though spatial
+convolution is unnecessary and is not applied.
+
 The cube axis order is always `(y, x, wavelength)` in Python. Optional result
 groups are absent when not requested; they are not present with a value of
 `None`.
@@ -93,11 +106,30 @@ Each entry in `result.apertures` always contains:
 - `name`: configured aperture name
 - `mask`: read-only three-dimensional Boolean mask
 - `snr`: scalar integrated signal to noise
+- `spectra.snr`: S/N after spatially summing selected voxels at each wavelength
+- `maps.snr`: S/N after spectrally summing selected voxels at each position
 
 Requested signal, variance, and noisy-data summaries appear under `signals`,
 `variances`, and `data`, matching the groups requested from `run()`. Aperture
 data has one value per noisy realization. For in-field subtraction, aperture
 signals describe the sky-subtracted reduction.
+
+With `include_signals=True`, both `spectra.signals` and `maps.signals` contain
+the same target, sky, thermal, dark, background, and total fields as the
+integrated aperture signal group. Spectra have shape `(wavelength,)`, maps have
+shape `(y, x)`, and summing either projection reproduces the corresponding
+integrated signal.
+
+With `include_variances=True`, the equivalent projection groups contain
+target, sky, thermal, dark, read, and total variances. Spectral variances are
+covariance-aware and sum to the integrated aperture variances. Map variances
+are marginal per-spaxel reductions. Under in-field subtraction, their sum does
+not generally reproduce the integrated variance because a two-dimensional map
+cannot encode covariance between spaxels that share a sky estimate. Under
+nodding, where selected voxels are independent, it does.
+
+Projection samples outside the three-dimensional aperture support contain
+zero. Plotting functions mask those samples using the retained aperture mask.
 
 ## Saving
 
@@ -118,8 +150,8 @@ format as coupled to compatible Python, dependency, and CubeSim versions.
 `.fits`, `.fit`, and `.fts` store portable science datacubes and interpretive
 metadata. Every FITS result contains wavelength and S/N image extensions.
 Requested combined-target, transmission, sky, thermal, signal, variance, and
-noisy-data products are included when present. Sky masks and aperture products
-are also included when configured.
+noisy-data products are included when present. PSF snapshots, sky masks, and
+aperture products are also included when configured.
 
 Image units are written in FITS metadata. Cube WCS uses celestial coordinates
 when `set_pointing(center=...)` supplied an absolute center and angular offsets
@@ -169,8 +201,15 @@ The image and table extension layout is:
 | `VARREAD` | `include_variances` | Read variance |
 | `VARTOTAL` | `include_variances` | Total variance |
 | `DATA` | `include_data` | Noisy sky-subtracted detector data |
+| `PSF` | configured PSF | Centered, normalized PSF image with `PIXSCALE` |
 | `SKYMASK` | in-field subtraction | Two-dimensional sky mask |
 | `APMASK<n>` | each aperture | Three-dimensional aperture mask |
+| `AP<n>SPECSNR` | each aperture | Spatially collapsed S/N spectrum |
+| `AP<n>MAPSNR` | each aperture | Spectrally collapsed S/N map |
+| `AP<n>SPECSIG<field>` | `include_signals` | Aperture signal-component spectrum |
+| `AP<n>MAPSIG<field>` | `include_signals` | Aperture signal-component map |
+| `AP<n>SPECVAR<field>` | `include_variances` | Aperture variance-component spectrum |
+| `AP<n>MAPVAR<field>` | `include_variances` | Aperture marginal-variance map |
 | `APERTURE` | any aperture | Aperture names, S/N, and requested summaries |
 
 Science images include `BUNIT`. FITS WCS axis 1 is wavelength, axes 2 and 3
@@ -178,6 +217,10 @@ are the spatial coordinates, and axis 4 is realization number when `DATA`
 contains multiple cubes. The `APERTURE` table always contains `NAME` and `SNR`;
 requested signal columns use a `SIG` prefix, requested variance columns use a
 `VAR` prefix, and requested aperture realizations use `DATA`.
+
+Aperture projection image headers record `APINDEX`, `APNAME`, `APVIEW`, and,
+for component arrays, `APFIELD`. Spectrum extensions carry wavelength WCS;
+map extensions carry the result's spatial WCS.
 
 FITS intentionally does not reconstruct the complete Python object graph or
 every per-target high- and low-resolution intermediate. Use pickle when exact

@@ -83,6 +83,35 @@ def test_run_returns_requested_groups_and_immutable_snapshot(instrument_data) ->
     assert result.options.n_cubes == 2
     assert result.apertures[0].data.shape == (2,)
     assert result.apertures[0].mask.sum() == 3
+    assert result.psf.shape == (5, 5)
+    assert result.psf.sum() == pytest.approx(1.0)
+    assert result.psf_pixel_scale == 10 * u.mas
+
+    aperture = result.apertures[0]
+    assert aperture.spectra.snr.shape == result.wavelength.shape
+    assert aperture.maps.snr.shape == result.snr.shape[:2]
+    for field in aperture.signals.__dataclass_fields__:
+        integrated = getattr(aperture.signals, field)
+        assert np.allclose(
+            getattr(aperture.spectra.signals, field).sum().to_value(integrated.unit),
+            integrated.value,
+        )
+        assert np.allclose(
+            getattr(aperture.maps.signals, field).sum().to_value(integrated.unit),
+            integrated.value,
+        )
+    for field in aperture.variances.__dataclass_fields__:
+        integrated = getattr(aperture.variances, field)
+        assert np.allclose(
+            getattr(aperture.spectra.variances, field).sum().to_value(
+                integrated.unit
+            ),
+            integrated.value,
+        )
+        assert np.allclose(
+            getattr(aperture.maps.variances, field).sum().to_value(integrated.unit),
+            integrated.value,
+        )
 
     with pytest.raises(ValueError, match="read-only"):
         result.snr[0, 0, 0] = 0
@@ -92,6 +121,12 @@ def test_run_returns_requested_groups_and_immutable_snapshot(instrument_data) ->
         result.options.targets[0].spectrum.wavelength[0] = 1.2 * u.micron
     with pytest.raises(ValueError, match="read-only"):
         result.apertures[0].data[0] = 0 * u.electron
+    with pytest.raises(ValueError, match="read-only"):
+        result.psf[0, 0] = 0
+    with pytest.raises(ValueError, match="read-only"):
+        result.apertures[0].spectra.snr[0] = 0
+    with pytest.raises(ValueError, match="read-only"):
+        result.apertures[0].maps.signals.target[0, 0] = 0 * u.electron
     with pytest.raises(ValueError, match="read-only"):
         result.models.transmission[0] = 0
     with pytest.raises(ValueError, match="read-only"):
@@ -103,10 +138,38 @@ def test_run_returns_requested_groups_and_immutable_snapshot(instrument_data) ->
 
 
 def test_optional_groups_are_absent_by_default(instrument_data) -> None:
-    result = _configured_etc(instrument_data).run()
+    etc = _configured_etc(instrument_data)
+    etc.add_aperture(name="voxel", size=(1, 1, 1), start=(0, 0, 0))
+    result = etc.run()
 
     for name in ("models", "signals", "variances", "data"):
         assert not hasattr(result, name)
+    aperture = result.apertures[0]
+    assert not hasattr(aperture, "signals")
+    assert not hasattr(aperture, "variances")
+    assert not hasattr(aperture.spectra, "signals")
+    assert not hasattr(aperture.spectra, "variances")
+    assert not hasattr(aperture.maps, "signals")
+    assert not hasattr(aperture.maps, "variances")
+
+
+def test_uniform_target_result_has_no_psf_snapshot(instrument_data) -> None:
+    etc = _base_etc(instrument_data)
+    etc.add_target(
+        position=(0 * u.arcsec, 0 * u.arcsec),
+        spatial=cubesim.Uniform(),
+        spectrum=cubesim.GaussianLines(
+            wavelength=1.1 * u.micron,
+            flux=1e-17 * u.erg / (u.s * u.cm**2 * u.arcsec**2),
+            dispersion=40 * u.km / u.s,
+        ),
+    )
+    etc.set_exposure(time=100 * u.s, n_target=2)
+
+    result = etc.run()
+
+    assert not hasattr(result, "psf")
+    assert not hasattr(result, "psf_pixel_scale")
 
 
 def test_realization_options_require_data(instrument_data) -> None:
@@ -219,6 +282,28 @@ def test_in_field_subtraction_propagates_aperture_covariance(instrument_data) ->
     assert result.options.exposure.n_target == 2
     assert result.options.exposure.n_sky == 0
     assert aperture.variances.total > result.variances.total[aperture.mask].sum()
+    assert np.allclose(
+        aperture.spectra.variances.total.sum().to_value(
+            aperture.variances.total.unit
+        ),
+        aperture.variances.total.value,
+    )
+    marginal_variance = result.variances.total[aperture.mask].sum()
+    assert np.allclose(
+        aperture.maps.variances.total.sum().to_value(marginal_variance.unit),
+        marginal_variance.value,
+    )
+    assert aperture.maps.variances.total.sum() < aperture.variances.total
+    for field in aperture.signals.__dataclass_fields__:
+        integrated = getattr(aperture.signals, field)
+        assert np.allclose(
+            getattr(aperture.spectra.signals, field).sum().to_value(integrated.unit),
+            integrated.value,
+        )
+        assert np.allclose(
+            getattr(aperture.maps.signals, field).sum().to_value(integrated.unit),
+            integrated.value,
+        )
 
 
 def test_in_field_subtraction_applies_target_estimate_to_snr(instrument_data) -> None:

@@ -11,12 +11,13 @@ from astropy.modeling.models import Sersic2D
 from scipy import ndimage
 from scipy.interpolate import interp1d
 from scipy.signal import fftconvolve
-from scipy.special import gammaincinv, gammaln
 from scipy.sparse import lil_matrix
+from scipy.special import gammaincinv, gammaln
 
 from cubesim._instrument import InstrumentDefinition, InstrumentSelection
 from cubesim._psf import Psf, _center_psf
 from cubesim._result import (
+    ApertureProjection,
     ApertureResult,
     ModelGrid,
     Models,
@@ -1370,47 +1371,57 @@ def _reduce_aperture(
     include_variances: bool,
 ) -> ApertureResult:
     mask = _aperture_mask(aperture, grid, selection, targets)
+    signal_values = {
+        field: getattr(signals, field) for field in Signals.__dataclass_fields__
+    }
     if sky_subtraction.method == "in_field":
-        target_cube = _subtract_in_field_estimate(
-            signals.target,
-            sky_subtraction.mask,
+        signal_values = {
+            field: _subtract_in_field_estimate(values, sky_subtraction.mask)
+            for field, values in signal_values.items()
+        }
+        integrated_variances, spectral_variances, map_variances = (
+            _in_field_aperture_variance_products(
+                mask,
+                sky_subtraction.mask,
+                signals,
+                exposure,
+                read_noise,
+            )
         )
-        reduced_variances = _in_field_aperture_variances(
-            mask,
-            sky_subtraction.mask,
-            signals,
-            exposure,
-            read_noise,
-        )
-        total_variance = reduced_variances.total
     else:
-        target_cube = signals.target
-        reduced_variances = None
-        total_variance = variances.total[mask].sum()
-    target = target_cube[mask].sum()
+        integrated_variances, spectral_variances, map_variances = (
+            _independent_aperture_variance_products(mask, variances)
+        )
+
+    spectral_signals = _project_signals(signal_values, mask, axis=(0, 1))
+    map_signals = _project_signals(signal_values, mask, axis=2)
+    target = spectral_signals.target.sum()
+    total_variance = integrated_variances.total
+    spectral_support = mask.any(axis=(0, 1))
+    map_support = mask.any(axis=2)
+    spectra = ApertureProjection(
+        snr=_projected_snr(
+            spectral_signals.target,
+            spectral_variances.total,
+            spectral_support,
+        ),
+        signals=spectral_signals if include_signals else None,
+        variances=spectral_variances if include_variances else None,
+    )
+    maps = ApertureProjection(
+        snr=_projected_snr(map_signals.target, map_variances.total, map_support),
+        signals=map_signals if include_signals else None,
+        variances=map_variances if include_variances else None,
+    )
     reduced_signals = None
     if include_signals:
-        signal_values = {
-            field: getattr(signals, field) for field in Signals.__dataclass_fields__
-        }
-        if sky_subtraction.method == "in_field":
-            signal_values = {
-                field: _subtract_in_field_estimate(values, sky_subtraction.mask)
-                for field, values in signal_values.items()
-            }
         reduced_signals = Signals(
-            **{field: values[mask].sum() for field, values in signal_values.items()}
+            **{
+                field: getattr(spectral_signals, field).sum()
+                for field in Signals.__dataclass_fields__
+            }
         )
-    if include_variances:
-        if reduced_variances is None:
-            reduced_variances = Variances(
-                **{
-                    field: getattr(variances, field)[mask].sum()
-                    for field in Variances.__dataclass_fields__
-                }
-            )
-    else:
-        reduced_variances = None
+    reduced_variances = integrated_variances if include_variances else None
     reduced_data = None
     if data is not None:
         reduced_data = data[mask].sum() if data.ndim == 3 else data[:, mask].sum(axis=1)
@@ -1418,10 +1429,124 @@ def _reduce_aperture(
         name=aperture.name,
         mask=mask,
         snr=target.value / np.sqrt(total_variance.value),
+        spectra=spectra,
+        maps=maps,
         signals=reduced_signals,
         variances=reduced_variances,
         data=reduced_data,
     )
+
+
+def _project_signals(
+    signal_values: dict[str, u.Quantity],
+    mask: np.ndarray,
+    *,
+    axis: int | tuple[int, ...],
+) -> Signals:
+    return Signals(
+        **{
+            field: _masked_sum(values, mask, axis=axis)
+            for field, values in signal_values.items()
+        }
+    )
+
+
+def _independent_aperture_variance_products(
+    mask: np.ndarray,
+    variances: Variances,
+) -> tuple[Variances, Variances, Variances]:
+    spectral = Variances(
+        **{
+            field: _masked_sum(getattr(variances, field), mask, axis=(0, 1))
+            for field in Variances.__dataclass_fields__
+        }
+    )
+    maps = Variances(
+        **{
+            field: _masked_sum(getattr(variances, field), mask, axis=2)
+            for field in Variances.__dataclass_fields__
+        }
+    )
+    integrated = Variances(
+        **{
+            field: getattr(spectral, field).sum()
+            for field in Variances.__dataclass_fields__
+        }
+    )
+    return integrated, spectral, maps
+
+
+def _masked_sum(
+    values: u.Quantity,
+    mask: np.ndarray,
+    *,
+    axis: int | tuple[int, ...],
+) -> u.Quantity:
+    return np.where(mask, values.value, 0.0).sum(axis=axis) * values.unit
+
+
+def _projected_snr(
+    target: u.Quantity,
+    total_variance: u.Quantity,
+    support: np.ndarray,
+) -> np.ndarray:
+    snr = np.zeros(target.shape, dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        snr[support] = target.value[support] / np.sqrt(total_variance.value[support])
+    return snr
+
+
+def _in_field_aperture_variance_products(
+    aperture_mask: np.ndarray,
+    sky_mask: np.ndarray,
+    signals: Signals,
+    exposure: Any,
+    read_noise: u.Quantity,
+) -> tuple[Variances, Variances, Variances]:
+    shape = signals.target.shape
+    raw_read_variance = np.full(
+        shape,
+        exposure.n_target * read_noise.to_value(u.electron) ** 2,
+    )
+    raw = {
+        "target": signals.target.value,
+        "sky": signals.sky.value,
+        "thermal": signals.thermal.value,
+        "dark": signals.dark.value,
+        "read": raw_read_variance,
+    }
+    spectral_values = {
+        name: _in_field_aperture_variance_spectrum(
+            aperture_mask,
+            sky_mask,
+            values,
+        )
+        * u.electron**2
+        for name, values in raw.items()
+    }
+    map_values = {
+        name: _masked_sum(
+            _in_field_marginal_variance(values, sky_mask) * u.electron**2,
+            aperture_mask,
+            axis=2,
+        )
+        for name, values in raw.items()
+    }
+    spectral_values["total"] = sum(
+        spectral_values.values(), start=np.zeros(shape[2]) * u.electron**2
+    )
+    map_values["total"] = sum(
+        map_values.values(), start=np.zeros(shape[:2]) * u.electron**2
+    )
+    spectral = Variances(**spectral_values)
+    maps = Variances(**map_values)
+    integrated = Variances(
+        **{
+            field: getattr(spectral, field).sum()
+            for field in Variances.__dataclass_fields__
+        }
+    )
+    return integrated, spectral, maps
 
 
 def _aperture_mask(
@@ -1521,53 +1646,21 @@ def _subtract_in_field_estimate(
     return signal - estimate[None, None, :]
 
 
-def _in_field_aperture_variances(
+def _in_field_aperture_variance_spectrum(
     aperture_mask: np.ndarray,
     sky_mask: np.ndarray,
-    signals: Signals,
-    exposure: Any,
-    read_noise: u.Quantity,
-) -> Variances:
-    shape = signals.target.shape
-    raw_read_variance = np.full(
-        shape,
-        exposure.n_target * read_noise.to_value(u.electron) ** 2,
-    )
-    raw = {
-        "target": signals.target.value,
-        "sky": signals.sky.value,
-        "thermal": signals.thermal.value,
-        "dark": signals.dark.value,
-        "read": raw_read_variance,
-    }
-    reduced = {
-        name: _in_field_aperture_variance(values, sky_mask, aperture_mask)
-        * u.electron**2
-        for name, values in raw.items()
-    }
-    reduced["total"] = sum(reduced.values(), start=0 * u.electron**2)
-    return Variances(**reduced)
-
-
-def _in_field_aperture_variance(
     raw_variance: np.ndarray,
-    sky_mask: np.ndarray,
-    aperture_mask: np.ndarray,
-) -> float:
+) -> np.ndarray:
     sky_count = int(sky_mask.sum())
-    total = 0.0
-    for wavelength_index in range(raw_variance.shape[2]):
-        aperture_slice = aperture_mask[:, :, wavelength_index]
-        aperture_count = int(aperture_slice.sum())
-        if aperture_count == 0:
-            continue
-        values = raw_variance[:, :, wavelength_index]
-        aperture_variance = values[aperture_slice].sum()
-        estimator_variance = values[sky_mask].sum() / sky_count**2
-        covariance = values[aperture_slice & sky_mask].sum() / sky_count
-        total += (
-            aperture_variance
-            + aperture_count**2 * estimator_variance
-            - 2 * aperture_count * covariance
-        )
-    return float(total)
+    aperture_count = aperture_mask.sum(axis=(0, 1))
+    aperture_variance = np.where(aperture_mask, raw_variance, 0.0).sum(
+        axis=(0, 1)
+    )
+    estimator_variance = raw_variance[sky_mask].sum(axis=0) / sky_count**2
+    overlap = aperture_mask & sky_mask[:, :, None]
+    covariance = np.where(overlap, raw_variance, 0.0).sum(axis=(0, 1)) / sky_count
+    return (
+        aperture_variance
+        + aperture_count**2 * estimator_variance
+        - 2 * aperture_count * covariance
+    )
