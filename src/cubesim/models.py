@@ -107,8 +107,9 @@ class SpatialImage:
 
     Args:
         source: In-memory two-dimensional array, NPY filename, or FITS
-            filename. Values must be finite and nonnegative with positive
-            total flux.
+            filename. Relative filenames resolve from the process working
+            directory. Values must be finite and nonnegative with positive
+            total flux. NPY files are loaded with pickling disabled.
         pixel_scale: Positive angular pixel scale required for in-memory and
             NPY inputs. FITS input reads ``PIXSCALE`` in milliarcseconds per
             pixel.
@@ -117,7 +118,9 @@ class SpatialImage:
             derive it from celestial WCS.
 
     The input is copied, normalized to unit total, and stored read-only.
-    Celestial WCS scale, when present in FITS, must agree with ``PIXSCALE``.
+    FITS input must contain a two-dimensional image and ``PIXSCALE`` in
+    milliarcseconds per pixel. Celestial WCS scale, when present, must agree
+    with ``PIXSCALE`` and supplies the image orientation.
     """
 
     data: np.ndarray
@@ -271,7 +274,8 @@ class VelocityField:
 
     Args:
         source: In-memory two-dimensional velocity quantity, NPY filename, or
-            FITS filename.
+            FITS filename. Relative filenames resolve from the process working
+            directory. NPY files are loaded with pickling disabled.
         unit: Velocity unit required for NPY input. In-memory quantities carry
             their own unit, and FITS input reads ``BUNIT``.
         pixel_scale: Positive angular pixel scale required for in-memory and
@@ -281,8 +285,13 @@ class VelocityField:
             in-memory and NPY inputs. FITS input owns its orientation and may
             derive it from celestial WCS.
 
-    The field must cover the complete selected IFU after transformation.
-    Coverage is validated during the calculation.
+    Input values must be finite. FITS input must contain a two-dimensional
+    image, a velocity ``BUNIT``, and ``PIXSCALE`` in milliarcseconds per pixel.
+    Celestial WCS, when present, supplies the orientation and must agree with
+    ``PIXSCALE``. The field must cover the complete selected IFU after
+    transformation, and all sampled velocity magnitudes must remain below the
+    speed of light. These calculation-dependent checks are performed when the
+    ETC runs.
     """
 
     data: u.Quantity
@@ -366,17 +375,24 @@ class TabulatedSpectrum:
     """A validated flux-density spectrum on an independent wavelength grid.
 
     Args:
-        source: Optional ECSV or FITS table filename containing wavelength and
-            flux columns.
+        source: Optional ECSV or FITS binary-table filename containing columns
+            named ``wavelength`` and ``flux``. Relative filenames resolve from
+            the process working directory.
         wavelength: In-memory one-dimensional wavelength quantity. Required
             with ``flux`` when ``source`` is omitted.
         flux: In-memory one-dimensional flux-density quantity matching
             ``wavelength``.
-        medium: ``"air"`` or ``"vacuum"``. File metadata may provide this;
-            the default is vacuum.
+        medium: ``"air"`` or ``"vacuum"``. ECSV metadata may provide a
+            ``medium`` value. A FITS ``TCTYPn`` value of ``WAVE`` or ``AWAV``
+            on the wavelength column selects vacuum or air, respectively.
+            Explicit and file-provided values must agree; absent metadata
+            defaults to vacuum.
 
     Wavelengths must be finite, positive, unique, strictly increasing, and
-    contain at least two samples. Air wavelengths are converted to vacuum.
+    contain at least two samples, with units convertible to microns. Flux must
+    be finite and nonnegative, with units convertible to flux density
+    (``erg / (s cm2 m)``) or surface-brightness density
+    (``erg / (s cm2 arcsec2 m)``). Air wavelengths are converted to vacuum.
     The tabulation must cover the selected disperser and any velocity-expanded
     margins; extrapolation is rejected during the calculation.
     """
