@@ -13,6 +13,8 @@ Every result contains:
 | `snr` | Dimensionless signal-to-noise cube | `(y, x, wavelength)` |
 | `wavelength` | Detector wavelength coordinate | `(wavelength,)` |
 | `options` | Structured snapshot of resolved inputs | scalar object |
+| `signals` | Target, sky, thermal, dark, and total electron cubes | `(y, x, wavelength)` |
+| `variances` | Target, sky, thermal, dark, read, and total variance cubes | `(y, x, wavelength)` |
 | `apertures` | Registered aperture results | tuple |
 
 When a PSF is configured, the result also contains:
@@ -28,8 +30,8 @@ PSF; in that case, neither attribute is present. If a PSF is configured for a
 uniform-only calculation, it is retained in the result even though spatial
 convolution is unnecessary and is not applied.
 
-The cube axis order is always `(y, x, wavelength)` in Python. Optional result
-groups are absent when not requested; they are not present with a value of
+The cube axis order is always `(y, x, wavelength)` in Python. The optional
+`models` group is absent when not requested; it is not present with a value of
 `None`.
 
 ## Options
@@ -41,7 +43,6 @@ groups are absent when not requested; they are not present with a value of
 - an owned snapshot of every target
 - PSF pixel scale and source path when applicable
 - resolved exposure and sky-subtraction configuration
-- requested number of noisy cubes
 
 `result.options.exposure` contains `time`, `n`, `n_target`, `n_sky`,
 `target_time`, `sky_time`, and `total_time`. The sky-subtraction options contain
@@ -73,7 +74,7 @@ exposure accounting; they are not duplicate model products.
 
 ## Signals
 
-With `include_signals=True`, `result.signals` contains electron cubes:
+`result.signals` always contains electron cubes:
 
 | Attribute | Meaning |
 | --- | --- |
@@ -81,23 +82,32 @@ With `include_signals=True`, `result.signals` contains electron cubes:
 | `sky` | Detected atmospheric sky electrons |
 | `thermal` | Detected thermal electrons |
 | `dark` | Detector dark-current electrons |
-| `background` | `sky + thermal + dark` |
-| `total` | `target + background` |
+| `total` | `target + sky + thermal + dark` |
 
-For in-field subtraction, these cube-level products remain the raw detected
-components used to construct Poisson noise. They do not replace the target with
-its sky-subtracted expectation.
+For in-field subtraction, the mask declares target-free spaxels. The target
+signal is zero within that mask. Sky, thermal, and dark remain the detected
+electron expectations that contribute shot noise, even though their expected
+values cancel during sky subtraction.
 
 ## Variances
 
-With `include_variances=True`, `result.variances` contains electron-squared
-cubes named `target`, `sky`, `thermal`, `dark`, `read`, and `total`.
+`result.variances` always contains electron-squared cubes named `target`,
+`sky`, `thermal`, `dark`, `read`, and `total`.
 
-## Noisy Data
+## Noisy Samples
 
-With `include_data=True`, `result.data` contains noisy, sky-subtracted detector
-data in electrons. For `n_cubes=1`, its shape is `(y, x, wavelength)`. For
-multiple realizations, its shape is `(n_cubes, y, x, wavelength)`.
+`result.sample(n=1, seed=None)` returns an immutable sampled-cube object without
+changing the deterministic result. Its `data` contains noisy, sky-subtracted
+detector electrons. One realization has shape `(y, x, wavelength)`; multiple
+realizations have shape `(n, y, x, wavelength)`. Subtract
+`result.signals.target` from `sample.data` to isolate the sampled noise.
+
+Sampling uses Poisson target and background counts plus Gaussian read noise.
+It applies the configured nodding or in-field subtraction operation to every
+realization. Supply a non-negative integer `seed` for reproducible data. When
+it is omitted, CubeSim generates one. The sample always exposes the seed used
+through `sample.seed` and retains `wavelength` and `options` for interpretation
+and persistence.
 
 ## Aperture Results
 
@@ -106,27 +116,35 @@ Each entry in `result.apertures` always contains:
 - `name`: configured aperture name
 - `mask`: read-only three-dimensional Boolean mask
 - `snr`: scalar integrated signal to noise
+- `signals`: integrated target, sky, thermal, dark, and total signals
+- `variances`: integrated target, sky, thermal, dark, read, and total variances
 - `spectra.snr`: S/N after spatially summing selected voxels at each wavelength
 - `maps.snr`: S/N after spectrally summing selected voxels at each position
 
-Requested signal, variance, and noisy-data summaries appear under `signals`,
-`variances`, and `data`, matching the groups requested from `run()`. Aperture
-data has one value per noisy realization. For in-field subtraction, aperture
-signals describe the sky-subtracted reduction.
+Aperture signals are direct reductions of the corresponding cube-level
+components. `aperture.sample(n=1, seed=None)` draws integrated aperture data
+without allocating full IFU cubes. The returned immutable object's `data` is a
+scalar electron quantity for one realization and a one-dimensional quantity
+for multiple realizations. Subtract `aperture.signals.target` from
+`sample.data` to isolate sampled aperture noise. The sample retains its seed,
+aperture name, three-dimensional mask, and wavelength coordinate.
 
-With `include_signals=True`, both `spectra.signals` and `maps.signals` contain
-the same target, sky, thermal, dark, background, and total fields as the
-integrated aperture signal group. Spectra have shape `(wavelength,)`, maps have
-shape `(y, x)`, and summing either projection reproduces the corresponding
-integrated signal.
+For in-field subtraction, an aperture that overlaps the sky mask is rejected.
+Sampling and variance reduction both propagate the shared IFU sky estimate;
+the aperture does not perform a separate sky-subtraction operation.
 
-With `include_variances=True`, the equivalent projection groups contain
-target, sky, thermal, dark, read, and total variances. Spectral variances are
-covariance-aware and sum to the integrated aperture variances. Map variances
-are marginal per-spaxel reductions. Under in-field subtraction, their sum does
-not generally reproduce the integrated variance because a two-dimensional map
-cannot encode covariance between spaxels that share a sky estimate. Under
-nodding, where selected voxels are independent, it does.
+Both `spectra.signals` and `maps.signals` contain the same target, sky, thermal,
+dark, and total fields as the integrated aperture signal group. Spectra have
+shape `(wavelength,)`, maps have shape `(y, x)`, and summing either projection
+reproduces the corresponding integrated signal.
+
+The equivalent projection groups contain target, sky, thermal, dark, read, and
+total variances. Spectral variances are covariance-aware and sum to the
+integrated aperture variances. Map variances are marginal per-spaxel
+reductions. Under in-field subtraction, their sum does not generally reproduce
+the integrated variance because a two-dimensional map cannot encode covariance
+between spaxels that share a sky estimate. Under nodding, where selected voxels
+are independent, it does.
 
 Projection samples outside the three-dimensional aperture support contain
 zero. Plotting functions mask those samples using the retained aperture mask.
@@ -147,15 +165,25 @@ format as coupled to compatible Python, dependency, and CubeSim versions.
 
 ### FITS
 
-`.fits`, `.fit`, and `.fts` store portable science datacubes and interpretive
-metadata. Every FITS result contains wavelength and S/N image extensions.
-Requested combined-target, transmission, sky, thermal, signal, variance, and
-noisy-data products are included when present. PSF snapshots, sky masks, and
-aperture products are also included when configured.
+`.fits`, `.fit`, and `.fts` store a fixed portable science product containing
+the wavelength coordinate and four detector cubes:
+
+- `SNR`: signal to noise
+- `SIGNAL`: expected sky-subtracted target electrons
+- `BACKGROUND`: atmospheric sky, thermal, and dark electrons before subtraction
+- `VARIANCE`: total variance after applying the configured sky subtraction
+
+The background is `result.signals.sky + result.signals.thermal +
+result.signals.dark`. The total detected signal remains derivable as `SIGNAL +
+BACKGROUND` and is not stored separately.
+
+FITS does not store models, component signals or variances, the PSF, registered
+apertures, masks, or random samples. Use pickle when the complete result object
+is required.
 
 Image units are written in FITS metadata. Cube WCS uses celestial coordinates
 when `set_pointing(center=...)` supplied an absolute center and angular offsets
-otherwise. Multiple noisy realizations add a realization axis.
+otherwise.
 
 The primary header records the resolved calculation metadata:
 
@@ -173,55 +201,44 @@ The primary header records the resolved calculation metadata:
 | `TONTARG` | On-target integration in seconds |
 | `TINT` | Total integration in seconds |
 | `SKYMETH` | Sky-subtraction method |
-| `NCUBES` | Number of requested noisy cubes |
 | `SKYSEQ` | Nodding sequence, when configured |
-| `PSFSCALE` | PSF pixel scale in milliarcseconds, when configured |
-| `PSFFILE` | PSF source path, when file-backed |
 
-The image and table extension layout is:
+The image extension layout is fixed:
 
 | Extension | Presence | Contents |
 | --- | --- | --- |
 | `WAVELEN` | always | Detector wavelength coordinate |
 | `SNR` | always | Signal-to-noise cube |
-| `MODEL` | `include_models` | Combined detector-resolution target model |
-| `TRANSMIS` | `include_models` | Atmospheric transmission model |
-| `SKYMODEL` | `include_models` | Atmospheric sky spectral-radiance model |
-| `THERMAL` | `include_models` | Instrument thermal spectral-radiance model |
-| `SIGTARG` | `include_signals` | Target signal |
-| `SIGSKY` | `include_signals` | Atmospheric sky signal |
-| `SIGTHERM` | `include_signals` | Thermal signal |
-| `SIGDARK` | `include_signals` | Dark-current signal |
-| `SIGBKG` | `include_signals` | Combined background signal |
-| `SIGTOTAL` | `include_signals` | Total detected signal |
-| `VARTARG` | `include_variances` | Target variance |
-| `VARSKY` | `include_variances` | Atmospheric sky variance |
-| `VARTHERM` | `include_variances` | Thermal variance |
-| `VARDARK` | `include_variances` | Dark-current variance |
-| `VARREAD` | `include_variances` | Read variance |
-| `VARTOTAL` | `include_variances` | Total variance |
-| `DATA` | `include_data` | Noisy sky-subtracted detector data |
-| `PSF` | configured PSF | Centered, normalized PSF image with `PIXSCALE` |
-| `SKYMASK` | in-field subtraction | Two-dimensional sky mask |
-| `APMASK<n>` | each aperture | Three-dimensional aperture mask |
-| `AP<n>SPECSNR` | each aperture | Spatially collapsed S/N spectrum |
-| `AP<n>MAPSNR` | each aperture | Spectrally collapsed S/N map |
-| `AP<n>SPECSIG<field>` | `include_signals` | Aperture signal-component spectrum |
-| `AP<n>MAPSIG<field>` | `include_signals` | Aperture signal-component map |
-| `AP<n>SPECVAR<field>` | `include_variances` | Aperture variance-component spectrum |
-| `AP<n>MAPVAR<field>` | `include_variances` | Aperture marginal-variance map |
-| `APERTURE` | any aperture | Aperture names, S/N, and requested summaries |
+| `SIGNAL` | always | Expected sky-subtracted target-electron cube |
+| `BACKGROUND` | always | Sky, thermal, and dark electron cube |
+| `VARIANCE` | always | Total electron-squared variance cube |
 
-Science images include `BUNIT`. FITS WCS axis 1 is wavelength, axes 2 and 3
-are the spatial coordinates, and axis 4 is realization number when `DATA`
-contains multiple cubes. The `APERTURE` table always contains `NAME` and `SNR`;
-requested signal columns use a `SIG` prefix, requested variance columns use a
-`VAR` prefix, and requested aperture realizations use `DATA`.
+Science images include `BUNIT`. FITS WCS axis 1 is wavelength, and axes 2 and 3
+are the spatial coordinates.
 
-Aperture projection image headers record `APINDEX`, `APNAME`, `APVIEW`, and,
-for component arrays, `APFIELD`. Spectrum extensions carry wavelength WCS;
-map extensions carry the result's spatial WCS.
+### Sampled FITS
 
-FITS intentionally does not reconstruct the complete Python object graph or
-every per-target high- and low-resolution intermediate. Use pickle when exact
-object reconstruction is required.
+Cube and aperture sample objects save directly to FITS:
+
+```python
+cube_sample = result.sample(n=10, seed=42)
+cube_sample.save("cube_samples.fits")
+
+aperture_sample = result.apertures[0].sample(n=1000, seed=91)
+aperture_sample.save("aperture_samples.fits")
+```
+
+A sampled-cube file contains `WAVELEN` and `DATA` extensions. `DATA` uses the
+same cube WCS and calculation metadata as deterministic result FITS files. A
+single realization is three-dimensional; multiple realizations use one
+four-dimensional image whose leading Python axis is the realization axis.
+
+A sampled-aperture file contains `WAVELEN`, `DATA`, and `MASK` extensions. The
+primary header records the aperture name. A single integrated realization is
+stored as a one-element `DATA` image, while multiple realizations form a
+one-dimensional image. `MASK` stores the registered three-dimensional aperture
+definition.
+
+Both sample formats record `RNGSEED` and `NREAL` in the primary header. Sample
+files accept `.fits`, `.fit`, or `.fts`; existing files require
+`overwrite=True`.

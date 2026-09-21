@@ -17,6 +17,7 @@ from scipy.special import gammaincinv, gammaln
 from cubesim._instrument import InstrumentDefinition, InstrumentSelection
 from cubesim._psf import Psf, _center_psf
 from cubesim._result import (
+    _ApertureSamplingState,
     ApertureProjection,
     ApertureResult,
     ModelGrid,
@@ -24,6 +25,10 @@ from cubesim._result import (
     Signals,
     TargetModels,
     Variances,
+)
+from cubesim._variance import (
+    in_field_aperture_variance_spectrum,
+    in_field_marginal_variance,
 )
 from cubesim.models import (
     ConstantVelocity,
@@ -70,7 +75,6 @@ class CalculationOutput:
     variances: Variances
     snr: np.ndarray
     apertures: tuple[ApertureResult, ...]
-    data: u.Quantity | None
 
 
 def calculate(
@@ -83,11 +87,6 @@ def calculate(
     sky_subtraction: Any,
     apertures: tuple[Any, ...],
     position_angle: u.Quantity,
-    include_signals: bool,
-    include_variances: bool,
-    include_data: bool,
-    n_cubes: int,
-    rng: np.random.Generator | None,
 ) -> CalculationOutput:
     """Execute one resolved calculation without mutating caller-owned state."""
 
@@ -136,17 +135,6 @@ def calculate(
         exposure,
         sky_subtraction,
     )
-    data = None
-    if include_data:
-        data = _sample_data(
-            signals,
-            exposure,
-            instrument.detector.read_noise,
-            sky_subtraction,
-            n_cubes,
-            rng,
-        )
-
     aperture_results = tuple(
         _reduce_aperture(
             aperture,
@@ -155,12 +143,9 @@ def calculate(
             targets,
             signals,
             variances,
-            data,
             sky_subtraction,
             exposure,
             instrument.detector.read_noise,
-            include_signals,
-            include_variances,
         )
         for aperture in apertures
     )
@@ -171,7 +156,6 @@ def calculate(
         variances=variances,
         snr=snr,
         apertures=aperture_results,
-        data=data,
     )
 
 
@@ -1134,6 +1118,9 @@ def _detector_products(
     ).to(1 / u.s)
 
     target = target_rate * exposure.n_target * exposure.time * u.electron
+    if sky_subtraction.method == "in_field":
+        target = target.copy()
+        target[sky_subtraction.mask] = 0 * u.electron
     sky_signal = sky_rate * exposure.n_target * exposure.time * u.electron
     thermal_signal = thermal_rate * exposure.n_target * exposure.time * u.electron
     dark = (
@@ -1150,7 +1137,6 @@ def _detector_products(
         sky=sky_signal,
         thermal=thermal_signal,
         dark=dark,
-        background=background,
         total=total,
     )
 
@@ -1168,21 +1154,21 @@ def _detector_products(
         variance_read = sky_weight * raw_read_variance * u.electron**2
     else:
         sky_mask = sky_subtraction.mask
-        snr_target = _subtract_in_field_estimate(target, sky_mask)
+        snr_target = target
         variance_target = (
-            _in_field_marginal_variance(target.value, sky_mask) * u.electron**2
+            in_field_marginal_variance(target.value, sky_mask) * u.electron**2
         )
         variance_sky = (
-            _in_field_marginal_variance(sky_signal.value, sky_mask) * u.electron**2
+            in_field_marginal_variance(sky_signal.value, sky_mask) * u.electron**2
         )
         variance_thermal = (
-            _in_field_marginal_variance(thermal_signal.value, sky_mask) * u.electron**2
+            in_field_marginal_variance(thermal_signal.value, sky_mask) * u.electron**2
         )
         variance_dark = (
-            _in_field_marginal_variance(dark.value, sky_mask) * u.electron**2
+            in_field_marginal_variance(dark.value, sky_mask) * u.electron**2
         )
         variance_read = (
-            _in_field_marginal_variance(raw_read_variance, sky_mask) * u.electron**2
+            in_field_marginal_variance(raw_read_variance, sky_mask) * u.electron**2
         )
     variance_total = (
         variance_target
@@ -1321,12 +1307,12 @@ def _sample_data(
     exposure: Any,
     read_noise: u.Quantity,
     sky_subtraction: Any,
-    n_cubes: int,
+    n: int,
     rng: np.random.Generator | None,
 ) -> u.Quantity:
     rng = np.random.default_rng() if rng is None else rng
     shape = signals.target.shape
-    output_shape = shape if n_cubes == 1 else (n_cubes, *shape)
+    output_shape = shape if n == 1 else (n, *shape)
     target_frame_mean = signals.total.to_value(u.electron)
     target_frames = rng.poisson(target_frame_mean, size=output_shape)
     read_sigma = read_noise.to_value(u.electron)
@@ -1338,14 +1324,15 @@ def _sample_data(
     target_data = target_frames + target_read
     if sky_subtraction.method == "in_field":
         sky_mask = sky_subtraction.mask
-        if n_cubes == 1:
+        if n == 1:
             sky_estimate = target_data[sky_mask].mean(axis=0)
             return (target_data - sky_estimate[None, None, :]) * u.electron
         sky_estimate = target_data[:, sky_mask, :].mean(axis=1)
         return (target_data - sky_estimate[:, None, None, :]) * u.electron
 
     sky_scale = exposure.n_target / exposure.n_sky
-    sky_frame_mean = signals.background.to_value(u.electron) / sky_scale
+    background = signals.sky + signals.thermal + signals.dark
+    sky_frame_mean = background.to_value(u.electron) / sky_scale
     sky_frames = rng.poisson(sky_frame_mean, size=output_shape)
     sky_read = rng.normal(
         0.0,
@@ -1355,6 +1342,29 @@ def _sample_data(
     return (target_data - sky_scale * (sky_frames + sky_read)) * u.electron
 
 
+def _sample_aperture_data(
+    sampling: _ApertureSamplingState,
+    n: int,
+    rng: np.random.Generator | None,
+) -> u.Quantity:
+    """Draw an integrated aperture sample without allocating an IFU cube."""
+
+    rng = np.random.default_rng() if rng is None else rng
+    shape = sampling.science_mean.shape
+    output_shape = shape if n == 1 else (n, *shape)
+    science = rng.poisson(sampling.science_mean, size=output_shape) + rng.normal(
+        0.0,
+        np.sqrt(sampling.science_read_variance),
+        size=output_shape,
+    )
+    sky = rng.poisson(sampling.sky_mean, size=output_shape) + rng.normal(
+        0.0,
+        np.sqrt(sampling.sky_read_variance),
+        size=output_shape,
+    )
+    return np.sum(science - sampling.sky_weight * sky, axis=-1) * u.electron
+
+
 def _reduce_aperture(
     aperture: Any,
     grid: SpectralGrid,
@@ -1362,22 +1372,22 @@ def _reduce_aperture(
     targets: tuple[Any, ...],
     signals: Signals,
     variances: Variances,
-    data: u.Quantity | None,
     sky_subtraction: Any,
     exposure: Any,
     read_noise: u.Quantity,
-    include_signals: bool,
-    include_variances: bool,
 ) -> ApertureResult:
     mask = _aperture_mask(aperture, grid, selection, targets)
+    if sky_subtraction.method == "in_field" and np.any(
+        mask & sky_subtraction.mask[:, :, None]
+    ):
+        raise ValueError(
+            f"Aperture '{aperture.name}' overlaps the in-field sky mask; "
+            "science apertures must use different spaxels."
+        )
     signal_values = {
         field: getattr(signals, field) for field in Signals.__dataclass_fields__
     }
     if sky_subtraction.method == "in_field":
-        signal_values = {
-            field: _subtract_in_field_estimate(values, sky_subtraction.mask)
-            for field, values in signal_values.items()
-        }
         integrated_variances, spectral_variances, map_variances = (
             _in_field_aperture_variance_products(
                 mask,
@@ -1404,26 +1414,27 @@ def _reduce_aperture(
             spectral_variances.total,
             spectral_support,
         ),
-        signals=spectral_signals if include_signals else None,
-        variances=spectral_variances if include_variances else None,
+        signals=spectral_signals,
+        variances=spectral_variances,
     )
     maps = ApertureProjection(
         snr=_projected_snr(map_signals.target, map_variances.total, map_support),
-        signals=map_signals if include_signals else None,
-        variances=map_variances if include_variances else None,
+        signals=map_signals,
+        variances=map_variances,
     )
-    reduced_signals = None
-    if include_signals:
-        reduced_signals = Signals(
-            **{
-                field: getattr(spectral_signals, field).sum()
-                for field in Signals.__dataclass_fields__
-            }
-        )
-    reduced_variances = integrated_variances if include_variances else None
-    reduced_data = None
-    if data is not None:
-        reduced_data = data[mask].sum() if data.ndim == 3 else data[:, mask].sum(axis=1)
+    reduced_signals = Signals(
+        **{
+            field: getattr(spectral_signals, field).sum()
+            for field in Signals.__dataclass_fields__
+        }
+    )
+    sampling = _aperture_sampling_state(
+        mask,
+        signals,
+        sky_subtraction,
+        exposure,
+        read_noise,
+    )
     return ApertureResult(
         name=aperture.name,
         mask=mask,
@@ -1438,8 +1449,51 @@ def _reduce_aperture(
         spectra=spectra,
         maps=maps,
         signals=reduced_signals,
-        variances=reduced_variances,
-        data=reduced_data,
+        variances=integrated_variances,
+        sampling=sampling,
+        wavelength=grid.wavelength,
+    )
+
+
+def _aperture_sampling_state(
+    mask: np.ndarray,
+    signals: Signals,
+    sky_subtraction: Any,
+    exposure: Any,
+    read_noise: u.Quantity,
+) -> _ApertureSamplingState:
+    background = signals.sky + signals.thermal + signals.dark
+    aperture_count = mask.sum(axis=(0, 1))
+    spectral_support = aperture_count > 0
+    aperture_count = aperture_count[spectral_support]
+    science_mean = np.sum(signals.total.value * mask, axis=(0, 1))[
+        spectral_support
+    ]
+    read_variance = read_noise.to_value(u.electron) ** 2
+    science_read_variance = exposure.n_target * aperture_count * read_variance
+    if sky_subtraction.method == "nodding":
+        sky_weight = np.full(mask.shape[2], exposure.n_target / exposure.n_sky)
+        sky_mean = (
+            np.sum(background.value * mask, axis=(0, 1)) / sky_weight
+        )[spectral_support]
+        sky_weight = sky_weight[spectral_support]
+        sky_read_variance = exposure.n_sky * aperture_count * read_variance
+    else:
+        sky_count = int(sky_subtraction.mask.sum())
+        sky_weight = aperture_count / sky_count
+        sky_mean = background.value[sky_subtraction.mask].sum(axis=0)[
+            spectral_support
+        ]
+        sky_read_variance = np.full(
+            aperture_count.shape,
+            exposure.n_target * sky_count * read_variance,
+        )
+    return _ApertureSamplingState(
+        science_mean=science_mean,
+        sky_mean=sky_mean,
+        sky_weight=sky_weight,
+        science_read_variance=science_read_variance,
+        sky_read_variance=sky_read_variance,
     )
 
 
@@ -1522,7 +1576,7 @@ def _in_field_aperture_variance_products(
         "read": raw_read_variance,
     }
     spectral_values = {
-        name: _in_field_aperture_variance_spectrum(
+        name: in_field_aperture_variance_spectrum(
             aperture_mask,
             sky_mask,
             values,
@@ -1532,7 +1586,7 @@ def _in_field_aperture_variance_products(
     }
     map_values = {
         name: _masked_sum(
-            _in_field_marginal_variance(values, sky_mask) * u.electron**2,
+            in_field_marginal_variance(values, sky_mask) * u.electron**2,
             aperture_mask,
             axis=2,
         )
@@ -1631,38 +1685,3 @@ def _centered_bounds(center: float, pixels: int) -> tuple[int, int]:
     start = int(np.rint(center - half)) + 1
     end = int(np.rint(center + half)) + 1
     return start, end
-
-
-def _in_field_marginal_variance(
-    raw_variance: np.ndarray,
-    sky_mask: np.ndarray,
-) -> np.ndarray:
-    sky_count = int(sky_mask.sum())
-    estimator_variance = raw_variance[sky_mask].sum(axis=0) / sky_count**2
-    covariance = np.zeros_like(raw_variance)
-    covariance[sky_mask] = 2 * raw_variance[sky_mask] / sky_count
-    return raw_variance + estimator_variance[None, None, :] - covariance
-
-
-def _subtract_in_field_estimate(
-    signal: u.Quantity,
-    sky_mask: np.ndarray,
-) -> u.Quantity:
-    estimate = signal[sky_mask].mean(axis=0)
-    return signal - estimate[None, None, :]
-
-
-def _in_field_aperture_variance_spectrum(
-    aperture_mask: np.ndarray,
-    sky_mask: np.ndarray,
-    raw_variance: np.ndarray,
-) -> np.ndarray:
-    sky_count = int(sky_mask.sum())
-    aperture_count = aperture_mask.sum(axis=(0, 1))
-    weights = aperture_mask.astype(float) - (
-        aperture_count[None, None, :] / sky_count
-    ) * sky_mask[:, :, None]
-    return np.sum(
-        weights**2 * raw_variance,
-        axis=(0, 1),
-    )

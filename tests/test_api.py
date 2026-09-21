@@ -7,6 +7,7 @@ from pathlib import Path
 import astropy.units as u
 import numpy as np
 import pytest
+from astropy.coordinates import SkyCoord
 
 import cubesim
 
@@ -54,19 +55,23 @@ def test_run_returns_requested_groups_and_immutable_snapshot(instrument_data) ->
         center=(1, 2, 1.1 * u.micron),
     )
 
-    result = etc.run(
-        include_models=True,
-        include_signals=True,
-        include_variances=True,
-        include_data=True,
-        n_cubes=2,
-        rng=np.random.default_rng(42),
+    result = etc.run(include_models=True)
+    sample = result.sample(n=2, seed=42)
+    single_sample = result.sample(seed=42)
+    aperture_sample = result.apertures[0].sample(
+        n=2,
+        seed=42,
+    )
+    single_aperture_sample = result.apertures[0].sample(
+        seed=42,
     )
 
     assert result.snr.shape[:2] == (3, 4)
     assert result.wavelength.shape == result.snr.shape[2:]
-    assert result.data.shape == (2, *result.snr.shape)
-    assert result.data.unit == u.electron
+    assert sample.data.shape == (2, *result.snr.shape)
+    assert sample.data.unit == u.electron
+    assert sample.seed == 42
+    assert single_sample.data.shape == result.snr.shape
     assert result.signals.target.unit == u.electron
     assert result.variances.total.unit == u.electron**2
     assert result.models.combined.shape == result.snr.shape
@@ -80,8 +85,11 @@ def test_run_returns_requested_groups_and_immutable_snapshot(instrument_data) ->
     assert result.options.exposure.n == 4
     assert result.options.exposure.n_target == 2
     assert result.options.exposure.n_sky == 2
-    assert result.options.n_cubes == 2
-    assert result.apertures[0].data.shape == (2,)
+    assert aperture_sample.data.shape == (2,)
+    assert aperture_sample.seed == 42
+    assert aperture_sample.name == "line"
+    assert np.array_equal(aperture_sample.mask, result.apertures[0].mask)
+    assert single_aperture_sample.data.isscalar
     assert result.apertures[0].mask.sum() == 3
     assert result.psf.shape == (5, 5)
     assert result.psf.sum() == pytest.approx(1.0)
@@ -92,6 +100,8 @@ def test_run_returns_requested_groups_and_immutable_snapshot(instrument_data) ->
     assert aperture.maps.snr.shape == result.snr.shape[:2]
     for field in aperture.signals.__dataclass_fields__:
         integrated = getattr(aperture.signals, field)
+        expected = getattr(result.signals, field)[aperture.mask].sum()
+        assert integrated.to_value(expected.unit) == pytest.approx(expected.value)
         assert np.allclose(
             getattr(aperture.spectra.signals, field).sum().to_value(integrated.unit),
             integrated.value,
@@ -120,8 +130,6 @@ def test_run_returns_requested_groups_and_immutable_snapshot(instrument_data) ->
     with pytest.raises(ValueError, match="read-only"):
         result.options.targets[0].spectrum.wavelength[0] = 1.2 * u.micron
     with pytest.raises(ValueError, match="read-only"):
-        result.apertures[0].data[0] = 0 * u.electron
-    with pytest.raises(ValueError, match="read-only"):
         result.psf[0, 0] = 0
     with pytest.raises(ValueError, match="read-only"):
         result.apertures[0].spectra.snr[0] = 0
@@ -133,24 +141,78 @@ def test_run_returns_requested_groups_and_immutable_snapshot(instrument_data) ->
         result.models.sky[0] = 0 * result.models.sky.unit
     with pytest.raises(ValueError, match="read-only"):
         result.models.thermal[0] = 0 * result.models.thermal.unit
-    with pytest.raises(AttributeError, match="immutable"):
-        result.data = result.data
 
 
-def test_optional_groups_are_absent_by_default(instrument_data) -> None:
+def test_result_snapshot_freezes_nested_model_and_pointing_data(
+    instrument_data,
+) -> None:
+    etc = _base_etc(instrument_data)
+    etc.set_pointing(
+        center=SkyCoord(ra=120 * u.deg, dec=25 * u.deg, frame="icrs")
+    )
+    etc.add_target(
+        position=(0 * u.arcsec, 0 * u.arcsec),
+        spatial=cubesim.SpatialImage(np.ones((3, 3)), pixel_scale=10 * u.mas),
+        spectrum=_line(),
+    )
+    etc.set_psf(np.ones((5, 5)), pixel_scale=10 * u.mas)
+    etc.set_exposure(time=100 * u.s, n_target=2)
+
+    result = etc.run()
+
+    with pytest.raises(ValueError, match="read-only"):
+        result.options.targets[0].spatial.pixel_scale[...] = 20 * u.mas
+    with pytest.raises(ValueError, match="read-only"):
+        result.options.pointing_center.data.lon[...] = 121 * u.deg
+
+
+@pytest.mark.parametrize("method", ["nodding", "in_field"])
+def test_aperture_samples_match_predicted_signal_and_variance(
+    instrument_data,
+    method: str,
+) -> None:
+    etc = _configured_etc(instrument_data)
+    if method == "in_field":
+        sky_mask = np.zeros((3, 4), dtype=bool)
+        sky_mask[0] = True
+        etc.set_sky_subtraction(method="in_field", mask=sky_mask)
+    etc.add_aperture(
+        name="source",
+        size=(1, 2, 3),
+        center=(1, 1.5, 1.1 * u.micron),
+    )
+    result = etc.run()
+    aperture = result.apertures[0]
+
+    samples = aperture.sample(n=20_000, seed=91)
+    noise = samples.data - aperture.signals.target
+    predicted = aperture.variances.total.to_value(u.electron**2)
+
+    assert abs(noise.mean().to_value(u.electron)) < 4 * np.sqrt(
+        predicted / len(samples.data)
+    )
+    assert noise.var(ddof=1).to_value(u.electron**2) == pytest.approx(
+        predicted,
+        rel=0.04,
+    )
+
+
+def test_default_result_includes_core_groups_but_not_models(instrument_data) -> None:
     etc = _configured_etc(instrument_data)
     etc.add_aperture(name="voxel", size=(1, 1, 1), start=(0, 0, 0))
     result = etc.run()
 
-    for name in ("models", "signals", "variances", "data"):
+    for name in ("models", "data"):
         assert not hasattr(result, name)
     aperture = result.apertures[0]
-    assert not hasattr(aperture, "signals")
-    assert not hasattr(aperture, "variances")
-    assert not hasattr(aperture.spectra, "signals")
-    assert not hasattr(aperture.spectra, "variances")
-    assert not hasattr(aperture.maps, "signals")
-    assert not hasattr(aperture.maps, "variances")
+    assert result.signals.total.shape == result.snr.shape
+    assert result.variances.total.shape == result.snr.shape
+    assert aperture.signals.total.isscalar
+    assert aperture.variances.total.isscalar
+    assert aperture.spectra.signals.total.shape == result.wavelength.shape
+    assert aperture.spectra.variances.total.shape == result.wavelength.shape
+    assert aperture.maps.signals.total.shape == result.snr.shape[:2]
+    assert aperture.maps.variances.total.shape == result.snr.shape[:2]
 
 
 def test_uniform_target_result_has_no_psf_snapshot(instrument_data) -> None:
@@ -172,39 +234,53 @@ def test_uniform_target_result_has_no_psf_snapshot(instrument_data) -> None:
     assert not hasattr(result, "psf_pixel_scale")
 
 
-def test_realization_options_require_data(instrument_data) -> None:
+def test_sampling_validates_request(instrument_data) -> None:
+    etc = _configured_etc(instrument_data)
+    etc.add_aperture(name="voxel", size=(1, 1, 1), start=(0, 0, 0))
+    result = etc.run()
+
+    cube_sample = result.sample()
+    aperture_sample = result.apertures[0].sample()
+    assert cube_sample.data.shape == result.snr.shape
+    assert isinstance(cube_sample.seed, int)
+    assert aperture_sample.data.isscalar
+    assert isinstance(aperture_sample.seed, int)
+    assert np.array_equal(
+        cube_sample.data,
+        result.sample(seed=cube_sample.seed).data,
+    )
+    assert np.array_equal(
+        aperture_sample.data,
+        result.apertures[0].sample(seed=aperture_sample.seed).data,
+    )
+    with pytest.raises(ValueError, match="positive integer"):
+        result.sample(n=0)
+    with pytest.raises(ValueError, match="positive integer"):
+        result.apertures[0].sample(n=True)
+    with pytest.raises(TypeError, match="non-negative integer"):
+        result.sample(seed=object())
+    with pytest.raises(ValueError, match="between 0"):
+        result.sample(seed=-1)
+
+
+def test_signal_identities_and_seeded_samples_are_reproducible(instrument_data) -> None:
     etc = _configured_etc(instrument_data)
 
-    with pytest.raises(ValueError, match="include_data=True"):
-        etc.run(n_cubes=2)
+    first = etc.run()
+    second = etc.run()
 
-
-def test_signal_identities_and_seeded_data_are_reproducible(instrument_data) -> None:
-    etc = _configured_etc(instrument_data)
-
-    first = etc.run(
-        include_signals=True,
-        include_variances=True,
-        include_data=True,
-        n_cubes=2,
-        rng=np.random.default_rng(17),
-    )
-    second = etc.run(
-        include_signals=True,
-        include_variances=True,
-        include_data=True,
-        n_cubes=2,
-        rng=np.random.default_rng(17),
-    )
-
-    assert np.array_equal(first.data.value, second.data.value)
-    assert np.allclose(
-        first.signals.background.value,
-        (first.signals.sky + first.signals.thermal + first.signals.dark).value,
-    )
+    first_sample = first.sample(n=2, seed=17)
+    second_sample = second.sample(n=2, seed=17)
+    assert np.array_equal(first_sample.data.value, second_sample.data.value)
+    assert not hasattr(first.signals, "background")
     assert np.allclose(
         first.signals.total.value,
-        (first.signals.target + first.signals.background).value,
+        (
+            first.signals.target
+            + first.signals.sky
+            + first.signals.thermal
+            + first.signals.dark
+        ).value,
     )
     assert np.allclose(
         first.variances.total.value,
@@ -222,16 +298,16 @@ def test_abba_resolves_total_and_target_exposure_counts(instrument_data) -> None
     total_count = _configured_etc(instrument_data)
     total_count.set_sky_subtraction(method="nodding", sequence="ABBA")
     total_count.set_exposure(time=30 * u.s, n=20)
-    total_result = total_count.run(include_variances=True)
+    total_result = total_count.run()
 
     target_count = _configured_etc(instrument_data)
     target_count.set_sky_subtraction(method="nodding", sequence="ABBA")
     target_count.set_exposure(time=30 * u.s, n_target=10)
-    target_result = target_count.run(include_variances=True)
+    target_result = target_count.run()
 
     equal_weight = _configured_etc(instrument_data)
     equal_weight.set_exposure(time=30 * u.s, n_target=10)
-    equal_weight_result = equal_weight.run(include_variances=True)
+    equal_weight_result = equal_weight.run()
 
     assert total_result.options.exposure == target_result.options.exposure
     assert total_result.options.exposure.n == 20
@@ -275,7 +351,7 @@ def test_in_field_subtraction_propagates_aperture_covariance(instrument_data) ->
         center=(1, 1.5, 1.1 * u.micron),
     )
 
-    result = etc.run(include_signals=True, include_variances=True)
+    result = etc.run()
     aperture = result.apertures[0]
 
     assert result.options.exposure.n == 2
@@ -296,6 +372,8 @@ def test_in_field_subtraction_propagates_aperture_covariance(instrument_data) ->
     assert aperture.maps.variances.total.sum() < aperture.variances.total
     for field in aperture.signals.__dataclass_fields__:
         integrated = getattr(aperture.signals, field)
+        expected = getattr(result.signals, field)[aperture.mask].sum()
+        assert integrated.to_value(expected.unit) == pytest.approx(expected.value)
         assert np.allclose(
             getattr(aperture.spectra.signals, field).sum().to_value(integrated.unit),
             integrated.value,
@@ -306,29 +384,39 @@ def test_in_field_subtraction_propagates_aperture_covariance(instrument_data) ->
         )
 
 
-def test_in_field_subtraction_applies_target_estimate_to_snr(instrument_data) -> None:
+def test_in_field_subtraction_treats_sky_mask_as_target_free(instrument_data) -> None:
     etc = _configured_etc(instrument_data)
+    sky_mask = np.zeros((3, 4), dtype=bool)
+    sky_mask[0] = True
     etc.set_sky_subtraction(
         method="in_field",
-        mask=np.ones((3, 4), dtype=bool),
+        mask=sky_mask,
     )
+
+    result = etc.run()
+    data = result.sample(seed=4).data
+
+    assert np.all(result.signals.target[sky_mask] == 0 * u.electron)
+    assert np.all(result.snr[sky_mask] == 0)
+    assert np.allclose(data[sky_mask].sum(axis=0).value, 0.0, atol=1e-12)
+
+
+def test_in_field_subtraction_rejects_aperture_sky_overlap(instrument_data) -> None:
+    etc = _configured_etc(instrument_data)
+    sky_mask = np.zeros((3, 4), dtype=bool)
+    sky_mask[0] = True
+    etc.set_sky_subtraction(method="in_field", mask=sky_mask)
     etc.add_aperture(
-        name="field",
-        size=(3, 4, 1),
-        start=(0, 0, 1.1 * u.micron),
+        name="overlap",
+        size=(1, 1, 1),
+        start=(0, 1, 1.1 * u.micron),
     )
 
-    result = etc.run(
-        include_signals=True,
-        include_data=True,
-        rng=np.random.default_rng(4),
-    )
-
-    assert result.snr.min() < 0
-    assert result.snr.max() > 0
-    assert result.apertures[0].snr == pytest.approx(0.0, abs=1e-7)
-    assert result.apertures[0].signals.target.value == pytest.approx(0.0, abs=1e-12)
-    assert np.allclose(result.data.sum(axis=(0, 1)).value, 0.0, atol=1e-12)
+    with pytest.raises(
+        ValueError,
+        match="Aperture 'overlap' overlaps the in-field sky mask",
+    ):
+        etc.run()
 
 
 @pytest.mark.parametrize(
@@ -344,6 +432,38 @@ def test_in_field_sky_mask_rejects_invalid_arrays(instrument_data, mask) -> None
 
     with pytest.raises(ValueError, match="nonempty 2D Boolean"):
         etc.set_sky_subtraction(method="in_field", mask=mask)
+
+
+def test_nodding_sequence_rejects_non_string_input(instrument_data) -> None:
+    etc = _configured_etc(instrument_data)
+
+    with pytest.raises(TypeError, match="sequence must be a string"):
+        etc.set_sky_subtraction(method="nodding", sequence=3)
+
+
+def test_aperture_rejects_malformed_coordinate_tuples(instrument_data) -> None:
+    etc = _configured_etc(instrument_data)
+
+    with pytest.raises(TypeError, match="size must be a .* tuple"):
+        etc.add_aperture(name="scalar-size", size=3)
+    with pytest.raises(ValueError, match="size must contain"):
+        etc.add_aperture(name="short-size", size=(1, 1))
+    with pytest.raises(TypeError, match="start must be a three-coordinate tuple"):
+        etc.add_aperture(name="scalar-start", size=(1, 1, 1), start=3)
+
+
+def test_aperture_rejects_empty_custom_mask(instrument_data) -> None:
+    etc = _configured_etc(instrument_data)
+
+    with pytest.raises(ValueError, match="nonempty three-dimensional Boolean"):
+        etc.add_aperture(name="empty", mask=np.zeros((3, 4, 5), dtype=bool))
+
+
+def test_run_rejects_non_boolean_model_selection(instrument_data) -> None:
+    etc = _configured_etc(instrument_data)
+
+    with pytest.raises(TypeError, match="include_models must be a Boolean"):
+        etc.run(include_models=1)
 
 
 def test_retained_state_is_revalidated_after_scale_change(instrument_data) -> None:

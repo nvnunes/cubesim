@@ -18,9 +18,6 @@ from cubesim._result import (
     ExposureOptions,
     ResultOptions,
     SkySubtractionOptions,
-    readonly_models,
-    readonly_signals,
-    readonly_variances,
 )
 from cubesim.models import (
     ConstantVelocity,
@@ -269,11 +266,16 @@ class Etc:
             sequence: Nodding sequence made from ``A`` target and ``B`` sky
                 frames. The default for nodding is ``"AB"``.
             mask: Nonempty two-dimensional Boolean detector mask for in-field
-                subtraction. ``True`` spaxels define the sky sample.
+                subtraction. ``True`` spaxels declare target-free sky samples.
         """
 
         if method == "nodding":
-            sequence = "AB" if sequence is None else sequence.upper()
+            if sequence is None:
+                sequence = "AB"
+            elif not isinstance(sequence, str):
+                raise TypeError("Nodding sequence must be a string.")
+            else:
+                sequence = sequence.upper()
             if set(sequence) != {"A", "B"} or not sequence:
                 raise ValueError("A nodding sequence must contain only A and B frames.")
             if mask is not None:
@@ -314,14 +316,15 @@ class Etc:
                 wavelength.
             start: Optional rectangle start coordinate using the same coordinate
                 forms as ``center``.
-            mask: Boolean mask with the exact output shape
+            mask: Nonempty Boolean mask with the exact output shape
                 ``(y, x, wavelength)``.
 
         A mask cannot be combined with rectangle arguments. ``center`` and
         ``start`` are mutually exclusive. Bounds are validated during
         :meth:`run`, after the wavelength grid is known. Without either
         placement, the aperture uses the central detector pixel spatially and
-        the first wavelength of the first target's spectrum spectrally.
+        the first wavelength of the first target's spectrum spectrally. An
+        aperture cannot overlap an in-field sky mask.
         """
 
         if not isinstance(name, str) or not name:
@@ -332,9 +335,13 @@ class Etc:
             if any(value is not None for value in (size, center, start)):
                 raise ValueError("mask cannot be combined with rectangle arguments.")
             array = np.asarray(mask)
-            if array.ndim != 3 or array.dtype != np.dtype(bool):
+            if (
+                array.ndim != 3
+                or array.dtype != np.dtype(bool)
+                or not array.any()
+            ):
                 raise ValueError(
-                    "Aperture mask must be a three-dimensional Boolean array."
+                    "Aperture mask must be a nonempty three-dimensional Boolean array."
                 )
             self._apertures.append(_Aperture(name, None, None, None, array.copy()))
             return
@@ -342,13 +349,19 @@ class Etc:
             raise ValueError("Rectangular apertures require size.")
         if center is not None and start is not None:
             raise ValueError("Provide at most one of center and start.")
+        if not isinstance(size, tuple):
+            raise TypeError("Aperture size must be a (y, x, wavelength) tuple.")
+        if len(size) != 3:
+            raise ValueError("Aperture size must contain (y, x, wavelength).")
         resolved_size = tuple(
             _positive_integer(value, "aperture size") for value in size
         )
-        if len(resolved_size) != 3:
-            raise ValueError("Aperture size must contain (y, x, wavelength).")
         for placement, label in ((center, "center"), (start, "start")):
-            if placement is not None and len(placement) != 3:
+            if placement is None:
+                continue
+            if not isinstance(placement, tuple):
+                raise TypeError(f"Aperture {label} must be a three-coordinate tuple.")
+            if len(placement) != 3:
                 raise ValueError(f"Aperture {label} must contain three coordinates.")
         self._apertures.append(_Aperture(name, resolved_size, center, start, None))
 
@@ -356,11 +369,6 @@ class Etc:
         self,
         *,
         include_models: bool = False,
-        include_signals: bool = False,
-        include_variances: bool = False,
-        include_data: bool = False,
-        n_cubes: int = 1,
-        rng: Any | None = None,
     ) -> EtcResult:
         """Run the configured forward ETC calculation.
 
@@ -368,25 +376,16 @@ class Etc:
             include_models: Include per-target high- and low-resolution model
                 components, their combined detector-resolution cube, and the
                 wavelength-grid transmission, sky, and thermal models.
-            include_signals: Include target, background-component, and total
-                detected electron cubes.
-            include_variances: Include detector variance-component cubes.
-            include_data: Include random noisy, sky-subtracted detector cubes.
-            n_cubes: Number of noisy realizations. Values other than one
-                require ``include_data=True``.
-            rng: Optional NumPy random generator. Valid only when data are
-                requested.
 
         Returns:
-            An immutable result containing S/N, wavelength, resolved options,
-            aperture reductions, and any requested optional groups.
+            An immutable result containing S/N, wavelength, signal and variance
+            components, resolved options, aperture reductions, and any requested
+            model products.
         """
 
-        selection, psf, exposure = self._validate_and_resolve(
-            include_data,
-            n_cubes,
-            rng,
-        )
+        if not isinstance(include_models, bool):
+            raise TypeError("include_models must be a Boolean value.")
+        selection, psf, exposure = self._validate_and_resolve()
         output = calculate(
             instrument=self._instrument,
             selection=selection,
@@ -396,11 +395,6 @@ class Etc:
             sky_subtraction=self._sky_subtraction,
             apertures=tuple(self._apertures),
             position_angle=self._position_angle,
-            include_signals=include_signals,
-            include_variances=include_variances,
-            include_data=include_data,
-            n_cubes=n_cubes,
-            rng=rng,
         )
         sky_mask = self._sky_subtraction.mask
         if sky_mask is not None:
@@ -423,28 +417,22 @@ class Etc:
                 sequence=self._sky_subtraction.sequence,
                 mask=sky_mask,
             ),
-            n_cubes=n_cubes,
         )
         return EtcResult(
             snr=output.snr,
             wavelength=output.grid.wavelength,
             options=options,
             apertures=output.apertures,
-            models=readonly_models(output.models) if include_models else None,
-            signals=readonly_signals(output.signals) if include_signals else None,
-            variances=(
-                readonly_variances(output.variances) if include_variances else None
-            ),
-            data=output.data if include_data else None,
+            models=output.models if include_models else None,
+            signals=output.signals,
+            variances=output.variances,
+            read_noise=self._instrument.detector.read_noise,
             psf=psf.data if psf is not None else None,
             psf_pixel_scale=psf.pixel_scale if psf is not None else None,
         )
 
     def _validate_and_resolve(
         self,
-        include_data: bool,
-        n_cubes: int,
-        rng: Any | None,
     ) -> tuple[InstrumentSelection, Psf | None, ExposureOptions]:
         if self._selection is None:
             raise ValueError("Call configure() before run().")
@@ -456,12 +444,6 @@ class Etc:
             not isinstance(target.spatial, Uniform) for target in self._targets
         ):
             raise ValueError("Call set_psf() before run() for non-uniform targets.")
-        if not isinstance(n_cubes, int) or isinstance(n_cubes, bool) or n_cubes <= 0:
-            raise ValueError("n_cubes must be a positive integer.")
-        if rng is not None and not isinstance(rng, np.random.Generator):
-            raise TypeError("rng must be a NumPy Generator.")
-        if not include_data and (n_cubes != 1 or rng is not None):
-            raise ValueError("n_cubes and rng require include_data=True.")
         if self._sky_subtraction.method == "in_field":
             expected = (
                 self._selection.scale.spaxels_y,

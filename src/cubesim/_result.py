@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import copy
 import pickle
-from dataclasses import dataclass
+import secrets
+from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
 import astropy.units as u
 import numpy as np
+from astropy.coordinates import SkyCoord
 from astropy.io import fits
+
+from cubesim._variance import in_field_aperture_variance_spectrum
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +49,6 @@ class ResultOptions:
     psf_path: Any | None
     exposure: ExposureOptions
     sky_subtraction: SkySubtractionOptions
-    n_cubes: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +82,6 @@ class Signals:
     sky: u.Quantity
     thermal: u.Quantity
     dark: u.Quantity
-    background: u.Quantity
     total: u.Quantity
 
 
@@ -93,6 +95,88 @@ class Variances:
     total: u.Quantity
 
 
+@dataclass(frozen=True, slots=True)
+class _ApertureSamplingState:
+    science_mean: np.ndarray
+    sky_mean: np.ndarray
+    sky_weight: np.ndarray
+    science_read_variance: np.ndarray
+    sky_read_variance: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
+class SampledCube:
+    """Immutable noisy IFU cube realizations.
+
+    Attributes:
+        data: Electron data with shape ``(y, x, wavelength)`` for one
+            realization or ``(n, y, x, wavelength)`` for multiple realizations.
+        wavelength: Detector wavelength coordinate.
+        seed: Random seed used to draw the realizations.
+        options: Resolved calculation options retained for metadata and WCS.
+    """
+
+    data: u.Quantity
+    wavelength: u.Quantity
+    seed: int
+    options: ResultOptions
+
+    def __post_init__(self) -> None:
+        if self.data.ndim not in {3, 4}:
+            raise ValueError("Sampled cube data must be three- or four-dimensional.")
+        if self.data.shape[-1] != len(self.wavelength):
+            raise ValueError("Sampled cube data must match the wavelength coordinate.")
+        if not self.data.unit.is_equivalent(u.electron):
+            raise u.UnitConversionError("Sampled cube data must have electron units.")
+        object.__setattr__(self, "data", _readonly_quantity(self.data))
+        object.__setattr__(self, "wavelength", _readonly_quantity(self.wavelength))
+
+    def save(self, path: str | Path, *, overwrite: bool = False) -> None:
+        """Save the sampled cube data, wavelength, metadata, and WCS as FITS."""
+
+        _save_sample(path, _sampled_cube_hdus(self), overwrite=overwrite)
+
+
+@dataclass(frozen=True, slots=True)
+class SampledAperture:
+    """Immutable noisy realizations integrated over one aperture.
+
+    Attributes:
+        data: Scalar electron data for one realization or one-dimensional
+            electron data for multiple realizations.
+        wavelength: Detector wavelength coordinate associated with the mask.
+        seed: Random seed used to draw the realizations.
+        name: Registered aperture name.
+        mask: Three-dimensional Boolean aperture mask.
+    """
+
+    data: u.Quantity
+    wavelength: u.Quantity
+    seed: int
+    name: str
+    mask: np.ndarray
+
+    def __post_init__(self) -> None:
+        if self.data.ndim > 1:
+            raise ValueError("Sampled aperture data must be scalar or one-dimensional.")
+        if self.mask.ndim != 3 or self.mask.dtype.kind != "b":
+            raise ValueError(
+                "A sampled aperture mask must be a three-dimensional Boolean array."
+            )
+        if self.mask.shape[-1] != len(self.wavelength):
+            raise ValueError("A sampled aperture mask must match the wavelength coordinate.")
+        if not self.data.unit.is_equivalent(u.electron):
+            raise u.UnitConversionError("Sampled aperture data must have electron units.")
+        object.__setattr__(self, "data", _readonly_quantity(self.data))
+        object.__setattr__(self, "wavelength", _readonly_quantity(self.wavelength))
+        object.__setattr__(self, "mask", _readonly_array(self.mask))
+
+    def save(self, path: str | Path, *, overwrite: bool = False) -> None:
+        """Save the aperture samples and aperture definition as FITS."""
+
+        _save_sample(path, _sampled_aperture_hdus(self), overwrite=overwrite)
+
+
 class ApertureProjection:
     """One immutable aperture reduction retaining wavelength or position."""
 
@@ -102,15 +186,13 @@ class ApertureProjection:
         self,
         *,
         snr: np.ndarray,
-        signals: Signals | None = None,
-        variances: Variances | None = None,
+        signals: Signals,
+        variances: Variances,
     ) -> None:
         object.__setattr__(self, "_locked", False)
         self.snr = _readonly_array(snr)
-        if signals is not None:
-            self.signals = readonly_signals(signals)
-        if variances is not None:
-            self.variances = readonly_variances(variances)
+        self.signals = readonly_signals(signals)
+        self.variances = readonly_variances(variances)
         object.__setattr__(self, "_locked", True)
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -124,25 +206,32 @@ class ApertureProjection:
     def __setstate__(self, state: dict[str, Any]) -> None:
         object.__setattr__(self, "_locked", False)
         object.__setattr__(self, "snr", _readonly_array(state.pop("snr")))
-        if "signals" in state:
-            object.__setattr__(
-                self,
-                "signals",
-                readonly_signals(state.pop("signals")),
-            )
-        if "variances" in state:
-            object.__setattr__(
-                self,
-                "variances",
-                readonly_variances(state.pop("variances")),
-            )
+        object.__setattr__(
+            self,
+            "signals",
+            readonly_signals(state.pop("signals")),
+        )
+        object.__setattr__(
+            self,
+            "variances",
+            readonly_variances(state.pop("variances")),
+        )
         object.__setattr__(self, "_locked", True)
 
 
 class ApertureResult:
     """One immutable registered-aperture reduction."""
 
-    __slots__ = ("__dict__", "_locked", "maps", "mask", "name", "snr", "spectra")
+    __slots__ = (
+        "__dict__",
+        "_locked",
+        "_wavelength",
+        "maps",
+        "mask",
+        "name",
+        "snr",
+        "spectra",
+    )
 
     def __init__(
         self,
@@ -152,9 +241,10 @@ class ApertureResult:
         snr: float,
         spectra: ApertureProjection,
         maps: ApertureProjection,
-        signals: Any | None = None,
-        variances: Any | None = None,
-        data: Any | None = None,
+        signals: Signals,
+        variances: Variances,
+        sampling: _ApertureSamplingState,
+        wavelength: u.Quantity,
     ) -> None:
         object.__setattr__(self, "_locked", False)
         self.name = name
@@ -162,12 +252,10 @@ class ApertureResult:
         self.snr = float(snr)
         self.spectra = readonly_aperture_projection(spectra)
         self.maps = readonly_aperture_projection(maps)
-        if signals is not None:
-            self.signals = readonly_signals(signals)
-        if variances is not None:
-            self.variances = readonly_variances(variances)
-        if data is not None:
-            self.data = _readonly_quantity(data)
+        self.signals = readonly_signals(signals)
+        self.variances = readonly_variances(variances)
+        self._sampling = _readonly_aperture_sampling(sampling)
+        self._wavelength = _readonly_quantity(wavelength)
         object.__setattr__(self, "_locked", True)
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -182,6 +270,7 @@ class ApertureResult:
             "snr": self.snr,
             "spectra": self.spectra,
             "maps": self.maps,
+            "_wavelength": self._wavelength,
             **self.__dict__,
         }
 
@@ -200,25 +289,57 @@ class ApertureResult:
             "maps",
             readonly_aperture_projection(state.pop("maps")),
         )
-        if "signals" in state:
-            object.__setattr__(
-                self,
-                "signals",
-                readonly_signals(state.pop("signals")),
-            )
-        if "variances" in state:
-            object.__setattr__(
-                self,
-                "variances",
-                readonly_variances(state.pop("variances")),
-            )
-        if "data" in state:
-            object.__setattr__(
-                self,
-                "data",
-                _readonly_quantity(state.pop("data")),
-            )
+        object.__setattr__(
+            self,
+            "signals",
+            readonly_signals(state.pop("signals")),
+        )
+        object.__setattr__(
+            self,
+            "variances",
+            readonly_variances(state.pop("variances")),
+        )
+        object.__setattr__(
+            self,
+            "_sampling",
+            _readonly_aperture_sampling(state.pop("_sampling")),
+        )
+        object.__setattr__(
+            self,
+            "_wavelength",
+            _readonly_quantity(state.pop("_wavelength")),
+        )
         object.__setattr__(self, "_locked", True)
+
+    def sample(
+        self,
+        n: int = 1,
+        *,
+        seed: int | None = None,
+    ) -> SampledAperture:
+        """Draw integrated noisy realizations for this aperture.
+
+        The sample data is a scalar electron quantity when ``n=1`` and a
+        one-dimensional quantity with one value per realization otherwise.
+        When ``seed`` is omitted, a seed is generated and retained by the
+        returned sample.
+        """
+
+        seed = _resolve_sample_request(n, seed)
+        from cubesim._calculation import _sample_aperture_data
+
+        data = _sample_aperture_data(
+            self._sampling,
+            n,
+            np.random.default_rng(seed),
+        )
+        return SampledAperture(
+            data=data,
+            wavelength=self._wavelength,
+            seed=seed,
+            name=self.name,
+            mask=self.mask,
+        )
 
 
 class EtcResult:
@@ -240,10 +361,10 @@ class EtcResult:
         wavelength: u.Quantity,
         options: ResultOptions,
         apertures: tuple[ApertureResult, ...],
+        signals: Signals,
+        variances: Variances,
+        read_noise: u.Quantity,
         models: Models | None = None,
-        signals: Signals | None = None,
-        variances: Variances | None = None,
-        data: u.Quantity | None = None,
         psf: np.ndarray | None = None,
         psf_pixel_scale: u.Quantity | None = None,
     ) -> None:
@@ -252,14 +373,11 @@ class EtcResult:
         self.wavelength = _readonly_quantity(wavelength)
         self.options = readonly_options(options)
         self.apertures = apertures
+        self.signals = readonly_signals(signals)
+        self.variances = readonly_variances(variances)
+        self._read_noise = _readonly_quantity(read_noise)
         if models is not None:
-            self.models = models
-        if signals is not None:
-            self.signals = signals
-        if variances is not None:
-            self.variances = variances
-        if data is not None:
-            self.data = _readonly_quantity(data)
+            self.models = readonly_models(models)
         if (psf is None) != (psf_pixel_scale is None):
             raise ValueError("PSF data and pixel scale must be provided together.")
         if psf is not None:
@@ -291,26 +409,23 @@ class EtcResult:
         )
         object.__setattr__(self, "options", readonly_options(state.pop("options")))
         object.__setattr__(self, "apertures", state.pop("apertures"))
+        object.__setattr__(
+            self,
+            "signals",
+            readonly_signals(state.pop("signals")),
+        )
+        object.__setattr__(
+            self,
+            "variances",
+            readonly_variances(state.pop("variances")),
+        )
+        object.__setattr__(
+            self,
+            "_read_noise",
+            _readonly_quantity(state.pop("_read_noise")),
+        )
         if "models" in state:
             object.__setattr__(self, "models", readonly_models(state.pop("models")))
-        if "signals" in state:
-            object.__setattr__(
-                self,
-                "signals",
-                readonly_signals(state.pop("signals")),
-            )
-        if "variances" in state:
-            object.__setattr__(
-                self,
-                "variances",
-                readonly_variances(state.pop("variances")),
-            )
-        if "data" in state:
-            object.__setattr__(
-                self,
-                "data",
-                _readonly_quantity(state.pop("data")),
-            )
         if "psf" in state:
             object.__setattr__(self, "psf", _readonly_array(state.pop("psf")))
             object.__setattr__(
@@ -320,8 +435,83 @@ class EtcResult:
             )
         object.__setattr__(self, "_locked", True)
 
+    def sample(
+        self,
+        n: int = 1,
+        *,
+        seed: int | None = None,
+    ) -> SampledCube:
+        """Draw noisy, sky-subtracted IFU data realizations.
+
+        The sample data has shape ``(y, x, wavelength)`` when ``n=1``.
+        Multiple realizations add a leading axis. When ``seed`` is omitted, a
+        seed is generated and retained by the returned sample.
+        """
+
+        seed = _resolve_sample_request(n, seed)
+        from cubesim._calculation import _sample_data
+
+        data = _sample_data(
+            self.signals,
+            self.options.exposure,
+            self._read_noise,
+            self.options.sky_subtraction,
+            n,
+            np.random.default_rng(seed),
+        )
+        return SampledCube(
+            data=data,
+            wavelength=self.wavelength,
+            seed=seed,
+            options=self.options,
+        )
+
+    def _snr_spectrum_for_spatial_mask(
+        self,
+        spatial_mask: np.ndarray,
+    ) -> np.ndarray:
+        """Reduce the S/N spectrum over a spatial detector mask."""
+
+        spatial_mask = np.asarray(spatial_mask)
+        if (
+            spatial_mask.shape != self.snr.shape[:2]
+            or spatial_mask.dtype.kind != "b"
+        ):
+            raise ValueError("Spatial S/N reduction requires a 2D Boolean IFU mask.")
+        if self.options.sky_subtraction.method == "in_field":
+            sky_mask = self.options.sky_subtraction.mask
+            raw_read_variance = np.full(
+                self.snr.shape,
+                self.options.exposure.n_target
+                * self._read_noise.to_value(u.electron) ** 2,
+            )
+            raw_variance = self.signals.total.value + raw_read_variance
+            aperture_mask = np.broadcast_to(
+                spatial_mask[:, :, None],
+                self.snr.shape,
+            )
+            variance = in_field_aperture_variance_spectrum(
+                aperture_mask,
+                sky_mask,
+                raw_variance,
+            )
+        else:
+            variance = self.variances.total[spatial_mask].sum(axis=0).value
+        signal = self.signals.target[spatial_mask].sum(axis=0).value
+        return _snr_values(signal, variance)
+
+    def _snr_map_for_wavelength_indices(
+        self,
+        indices: np.ndarray,
+    ) -> np.ndarray:
+        """Reduce the S/N map over detector wavelength indices."""
+
+        signal = self.signals.target[:, :, indices].sum(axis=2).value
+        variance = self.variances.total[:, :, indices].sum(axis=2).value
+        return _snr_values(signal, variance)
+
     def save(self, path: str | Path, *, overwrite: bool = False) -> None:
-        """Save the complete result as pickle or portable datacubes as FITS."""
+        """Save the complete result as pickle or key science cubes as FITS."""
 
         path = Path(path).expanduser()
         if path.exists() and not overwrite:
@@ -379,16 +569,16 @@ def readonly_aperture_projection(
 ) -> ApertureProjection:
     return ApertureProjection(
         snr=projection.snr,
-        signals=getattr(projection, "signals", None),
-        variances=getattr(projection, "variances", None),
+        signals=projection.signals,
+        variances=projection.variances,
     )
 
 
 def readonly_options(options: ResultOptions) -> ResultOptions:
     targets = copy.deepcopy(options.targets)
-    for target in targets:
-        _freeze_target(target)
+    _freeze_nested_data(targets)
     pointing_center = copy.deepcopy(options.pointing_center)
+    _freeze_nested_data(pointing_center)
     exposure = ExposureOptions(
         time=_readonly_quantity(options.exposure.time),
         n=options.exposure.n,
@@ -421,8 +611,35 @@ def readonly_options(options: ResultOptions) -> ResultOptions:
         psf_path=options.psf_path,
         exposure=exposure,
         sky_subtraction=sky_subtraction,
-        n_cubes=options.n_cubes,
     )
+
+
+def _readonly_aperture_sampling(
+    sampling: _ApertureSamplingState,
+) -> _ApertureSamplingState:
+    return _ApertureSamplingState(
+        science_mean=_readonly_array(sampling.science_mean),
+        sky_mean=_readonly_array(sampling.sky_mean),
+        sky_weight=_readonly_array(sampling.sky_weight),
+        science_read_variance=_readonly_array(sampling.science_read_variance),
+        sky_read_variance=_readonly_array(sampling.sky_read_variance),
+    )
+
+
+def _resolve_sample_request(
+    n: int,
+    seed: int | None,
+) -> int:
+    if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
+        raise ValueError("n must be a positive integer.")
+    if seed is None:
+        return secrets.randbits(63)
+    if not isinstance(seed, (int, np.integer)) or isinstance(seed, bool):
+        raise TypeError("seed must be a non-negative integer.")
+    seed = int(seed)
+    if seed < 0 or seed > np.iinfo(np.int64).max:
+        raise ValueError("seed must be between 0 and 2**63 - 1.")
+    return seed
 
 
 def _readonly_model_grid(grid: ModelGrid) -> ModelGrid:
@@ -458,138 +675,106 @@ def _readonly_quantity(values: u.Quantity) -> u.Quantity:
     return quantity
 
 
-def _freeze_target(target: Any) -> None:
-    for value in target.position:
+def _freeze_nested_data(value: Any) -> None:
+    if isinstance(value, u.Quantity):
         value.setflags(write=False)
-    spatial = target.spatial
-    for name in ("effective_radius", "fwhm", "position_angle"):
-        value = getattr(spatial, name, None)
-        if isinstance(value, u.Quantity):
-            value.setflags(write=False)
-    data = getattr(spatial, "data", None)
-    if isinstance(data, np.ndarray):
-        data.setflags(write=False)
-    velocity = target.velocity
-    if velocity is not None:
-        for name in (
-            "offset",
-            "maximum_velocity",
-            "turnover_radius",
-            "inclination",
-            "position_angle",
-            "systemic_velocity",
-            "data",
-            "pixel_scale",
-        ):
-            value = getattr(velocity, name, None)
-            if isinstance(value, u.Quantity):
-                value.setflags(write=False)
-    spectrum = target.spectrum
-    for name in (
-        "wavelength",
-        "rest_wavelength",
-        "flux",
-        "dispersion",
-        "fwhm",
-        "continuum",
-    ):
-        value = getattr(spectrum, name, None)
-        if isinstance(value, u.Quantity):
-            value.setflags(write=False)
+        return
+    if isinstance(value, np.ndarray):
+        value.setflags(write=False)
+        return
+    if isinstance(value, SkyCoord):
+        for component in value.data.components:
+            _freeze_nested_data(getattr(value.data, component))
+        return
+    if is_dataclass(value) and not isinstance(value, type):
+        for field in fields(value):
+            _freeze_nested_data(getattr(value, field.name))
+        return
+    if isinstance(value, (tuple, list)):
+        for item in value:
+            _freeze_nested_data(item)
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            _freeze_nested_data(item)
 
 
 def _fits_hdus(result: EtcResult) -> list[Any]:
     header = _fits_metadata(result)
-    hdus: list[Any] = [fits.PrimaryHDU(header=header)]
-    hdus.append(_image_hdu("WAVELEN", result.wavelength))
-    hdus.append(
+    cube_header = _cube_wcs(result)
+    background = (
+        result.signals.sky + result.signals.thermal + result.signals.dark
+    )
+    return [
+        fits.PrimaryHDU(header=header),
+        _image_hdu("WAVELEN", result.wavelength),
         _image_hdu(
             "SNR",
             result.snr * u.dimensionless_unscaled,
-            header=_cube_wcs(result),
-        )
+            header=cube_header,
+        ),
+        _image_hdu("SIGNAL", result.signals.target, header=cube_header),
+        _image_hdu("BACKGROUND", background, header=cube_header),
+        _image_hdu("VARIANCE", result.variances.total, header=cube_header),
+    ]
+
+
+def _sampled_cube_hdus(sample: SampledCube) -> list[Any]:
+    header = _fits_metadata_from_options(sample.options)
+    header["PRODUCT"] = "SAMPLED CUBE"
+    header["RNGSEED"] = sample.seed
+    header["NREAL"] = 1 if sample.data.ndim == 3 else sample.data.shape[0]
+    cube_header = _cube_wcs_values(
+        sample.wavelength,
+        sample.data.shape[-3:],
+        sample.options,
     )
-    if hasattr(result, "models"):
-        hdus.append(
-            _image_hdu("MODEL", result.models.combined, header=_cube_wcs(result))
-        )
-        hdus.extend(
-            (
-                _image_hdu(
-                    "TRANSMIS",
-                    result.models.transmission * u.dimensionless_unscaled,
-                ),
-                _image_hdu("SKYMODEL", result.models.sky),
-                _image_hdu("THERMAL", result.models.thermal),
-            )
-        )
-    if hasattr(result, "signals"):
-        for name, field in (
-            ("SIGTARG", "target"),
-            ("SIGSKY", "sky"),
-            ("SIGTHERM", "thermal"),
-            ("SIGDARK", "dark"),
-            ("SIGBKG", "background"),
-            ("SIGTOTAL", "total"),
-        ):
-            hdus.append(
-                _image_hdu(
-                    name, getattr(result.signals, field), header=_cube_wcs(result)
-                )
-            )
-    if hasattr(result, "variances"):
-        for name, field in (
-            ("VARTARG", "target"),
-            ("VARSKY", "sky"),
-            ("VARTHERM", "thermal"),
-            ("VARDARK", "dark"),
-            ("VARREAD", "read"),
-            ("VARTOTAL", "total"),
-        ):
-            hdus.append(
-                _image_hdu(
-                    name,
-                    getattr(result.variances, field),
-                    header=_cube_wcs(result),
-                )
-            )
-    if hasattr(result, "data"):
-        hdus.append(_image_hdu("DATA", result.data, header=_data_wcs(result)))
-    if hasattr(result, "psf"):
-        psf_header = fits.Header(
-            {"PIXSCALE": result.psf_pixel_scale.to_value(u.mas)}
-        )
-        hdus.append(
-            _image_hdu(
-                "PSF",
-                result.psf * u.dimensionless_unscaled,
-                header=psf_header,
-            )
-        )
-    if result.options.sky_subtraction.mask is not None:
-        hdus.append(
-            fits.ImageHDU(
-                data=result.options.sky_subtraction.mask.astype(np.uint8),
-                name="SKYMASK",
-            )
-        )
-    for index, aperture in enumerate(result.apertures):
-        aperture_header = fits.Header({"APNAME": aperture.name})
-        hdus.append(
-            fits.ImageHDU(
-                data=aperture.mask.astype(np.uint8),
-                header=aperture_header,
-                name=f"APMASK{index}",
-            )
-        )
-        hdus.extend(_aperture_projection_hdus(result, aperture, index))
-    if result.apertures:
-        hdus.append(_aperture_table(result.apertures))
-    return hdus
+    if sample.data.ndim == 4:
+        cube_header["WCSAXES"] = 4
+        cube_header["CTYPE4"] = "REALIZATION"
+        cube_header["CRPIX4"] = 1.0
+        cube_header["CRVAL4"] = 1.0
+        cube_header["CD4_4"] = 1.0
+    return [
+        fits.PrimaryHDU(header=header),
+        _image_hdu("WAVELEN", sample.wavelength),
+        _image_hdu("DATA", sample.data, header=cube_header),
+    ]
+
+
+def _sampled_aperture_hdus(sample: SampledAperture) -> list[Any]:
+    header = fits.Header()
+    header["PRODUCT"] = "SAMPLED APERTURE"
+    header["APERTURE"] = sample.name
+    header["RNGSEED"] = sample.seed
+    header["NREAL"] = 1 if sample.data.isscalar else len(sample.data)
+    return [
+        fits.PrimaryHDU(header=header),
+        _image_hdu("WAVELEN", sample.wavelength),
+        _image_hdu("DATA", np.atleast_1d(sample.data.value) * sample.data.unit),
+        _image_hdu("MASK", sample.mask.astype(np.uint8)),
+    ]
+
+
+def _save_sample(
+    path: str | Path,
+    hdus: list[Any],
+    *,
+    overwrite: bool,
+) -> None:
+    path = Path(path).expanduser()
+    if path.exists() and not overwrite:
+        raise FileExistsError(f"Sample file already exists: {path}")
+    if path.suffix.lower() not in {".fit", ".fits", ".fts"}:
+        raise ValueError("Sample files must use FITS format.")
+    fits.HDUList(hdus).writeto(path, overwrite=overwrite, checksum=True)
 
 
 def _fits_metadata(result: EtcResult) -> fits.Header:
-    options = result.options
+    return _fits_metadata_from_options(result.options)
+
+
+def _fits_metadata_from_options(options: ResultOptions) -> fits.Header:
     exposure = options.exposure
     header = fits.Header()
     header["INSTRUME"] = options.instrument
@@ -604,13 +789,8 @@ def _fits_metadata(result: EtcResult) -> fits.Header:
     header["TONTARG"] = exposure.target_time.to_value(u.s)
     header["TINT"] = exposure.total_time.to_value(u.s)
     header["SKYMETH"] = options.sky_subtraction.method
-    header["NCUBES"] = options.n_cubes
     if options.sky_subtraction.sequence is not None:
         header["SKYSEQ"] = options.sky_subtraction.sequence
-    if options.psf_pixel_scale is not None:
-        header["PSFSCALE"] = options.psf_pixel_scale.to_value(u.mas)
-    if options.psf_path is not None:
-        header["PSFFILE"] = str(options.psf_path)
     return header
 
 
@@ -630,20 +810,28 @@ def _image_hdu(
 
 
 def _cube_wcs(result: EtcResult) -> fits.Header:
-    ny, nx, _ = result.snr.shape
-    wavelength = result.wavelength.to_value(u.micron)
-    pixel_scale = _result_pixel_scale(result).to_value(u.deg)
-    angle = result.options.position_angle.to_value(u.rad)
+    return _cube_wcs_values(result.wavelength, result.snr.shape, result.options)
+
+
+def _cube_wcs_values(
+    wavelength: u.Quantity,
+    shape: tuple[int, int, int],
+    options: ResultOptions,
+) -> fits.Header:
+    ny, nx, _ = shape
+    wavelength = wavelength.to_value(u.micron)
+    pixel_scale = options.spaxel_scale.to_value(u.deg)
+    angle = options.position_angle.to_value(u.rad)
     header = fits.Header()
     header["WCSAXES"] = 3
     header["CTYPE1"] = "WAVE"
     header["CUNIT1"] = "um"
     header["CRPIX1"] = 1.0
     header["CRVAL1"] = wavelength[0]
-    header["CDELT1"] = wavelength[1] - wavelength[0]
+    header["CD1_1"] = wavelength[1] - wavelength[0]
     header["CRPIX2"] = (nx + 1) / 2
     header["CRPIX3"] = (ny + 1) / 2
-    center = result.options.pointing_center
+    center = options.pointing_center
     if center is None:
         header["CTYPE2"] = "XOFFSET"
         header["CTYPE3"] = "YOFFSET"
@@ -666,127 +854,13 @@ def _cube_wcs(result: EtcResult) -> fits.Header:
     return header
 
 
-def _data_wcs(result: EtcResult) -> fits.Header:
-    header = _cube_wcs(result)
-    if result.data.ndim == 4:
-        header["WCSAXES"] = 4
-        header["CTYPE4"] = "CUBENUM"
-        header["CRPIX4"] = 1.0
-        header["CRVAL4"] = 1.0
-        header["CDELT4"] = 1.0
-    return header
-
-
-def _result_pixel_scale(result: EtcResult) -> u.Quantity:
-    return result.options.spaxel_scale
-
-
-def _aperture_table(apertures: tuple[ApertureResult, ...]) -> fits.BinTableHDU:
-    columns = [
-        fits.Column(name="NAME", format="64A", array=[item.name for item in apertures]),
-        fits.Column(name="SNR", format="D", array=[item.snr for item in apertures]),
-    ]
-    for group_name, prefix in (("signals", "SIG"), ("variances", "VAR")):
-        if all(hasattr(item, group_name) for item in apertures):
-            fields = type(getattr(apertures[0], group_name)).__dataclass_fields__
-            for field in fields:
-                values = [
-                    getattr(getattr(item, group_name), field).value
-                    for item in apertures
-                ]
-                unit = getattr(getattr(apertures[0], group_name), field).unit
-                columns.append(
-                    fits.Column(
-                        name=f"{prefix}{field.upper()}",
-                        format="D",
-                        unit=_unit_string(unit),
-                        array=values,
-                    )
-                )
-    if all(hasattr(item, "data") for item in apertures):
-        size = max(np.atleast_1d(item.data.value).size for item in apertures)
-        values = np.vstack([np.atleast_1d(item.data.value) for item in apertures])
-        columns.append(
-            fits.Column(
-                name="DATA",
-                format=f"{size}D",
-                unit=_unit_string(apertures[0].data.unit),
-                array=values,
-            )
-        )
-    return fits.BinTableHDU.from_columns(columns, name="APERTURE")
-
-
-def _aperture_projection_hdus(
-    result: EtcResult,
-    aperture: ApertureResult,
-    index: int,
-) -> list[fits.ImageHDU]:
-    hdus: list[fits.ImageHDU] = []
-    for label, projection, wcs in (
-        ("SPEC", aperture.spectra, _spectral_wcs(result)),
-        ("MAP", aperture.maps, _spatial_wcs(result)),
-    ):
-        base_header = wcs.copy()
-        base_header["APINDEX"] = index
-        base_header["APNAME"] = aperture.name
-        base_header["APVIEW"] = label
-        hdus.append(
-            _image_hdu(
-                f"AP{index}{label}SNR",
-                projection.snr * u.dimensionless_unscaled,
-                header=base_header,
-            )
-        )
-        for group_name, prefix in (("signals", "SIG"), ("variances", "VAR")):
-            if not hasattr(projection, group_name):
-                continue
-            group = getattr(projection, group_name)
-            for field in type(group).__dataclass_fields__:
-                field_header = base_header.copy()
-                field_header["APFIELD"] = field
-                hdus.append(
-                    _image_hdu(
-                        f"AP{index}{label}{prefix}{field.upper()}",
-                        getattr(group, field),
-                        header=field_header,
-                    )
-                )
-    return hdus
-
-
-def _spectral_wcs(result: EtcResult) -> fits.Header:
-    wavelength = result.wavelength.to_value(u.micron)
-    header = fits.Header()
-    header["WCSAXES"] = 1
-    header["CTYPE1"] = "WAVE"
-    header["CUNIT1"] = "um"
-    header["CRPIX1"] = 1.0
-    header["CRVAL1"] = wavelength[0]
-    header["CDELT1"] = wavelength[1] - wavelength[0]
-    return header
-
-
-def _spatial_wcs(result: EtcResult) -> fits.Header:
-    cube = _cube_wcs(result)
-    header = fits.Header()
-    header["WCSAXES"] = 2
-    for target, source in (
-        ("CTYPE1", "CTYPE2"),
-        ("CTYPE2", "CTYPE3"),
-        ("CUNIT1", "CUNIT2"),
-        ("CUNIT2", "CUNIT3"),
-        ("CRPIX1", "CRPIX2"),
-        ("CRPIX2", "CRPIX3"),
-        ("CRVAL1", "CRVAL2"),
-        ("CRVAL2", "CRVAL3"),
-        ("CD1_1", "CD2_2"),
-        ("CD1_2", "CD2_3"),
-        ("CD2_1", "CD3_2"),
-        ("CD2_2", "CD3_3"),
-    ):
-        header[target] = cube[source]
-    return header
+def _snr_values(signal: np.ndarray, variance: np.ndarray) -> np.ndarray:
+    return np.divide(
+        signal,
+        np.sqrt(variance),
+        out=np.zeros_like(signal, dtype=float),
+        where=variance > 0,
+    )
 
 
 def _unit_string(unit: u.UnitBase) -> str:

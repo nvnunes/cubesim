@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
+from astropy.wcs import WCS
 
 import cubesim
 
@@ -22,7 +23,14 @@ def test_pickle_round_trips_complete_result(instrument_data, tmp_path) -> None:
         restored = pickle.load(stream)
 
     assert np.array_equal(restored.snr, result.snr)
-    assert np.array_equal(restored.data, result.data)
+    assert np.array_equal(
+        restored.sample(n=2, seed=9).data,
+        result.sample(n=2, seed=9).data,
+    )
+    assert np.array_equal(
+        restored.apertures[0].sample(n=2, seed=9).data,
+        result.apertures[0].sample(n=2, seed=9).data,
+    )
     assert restored.options.instrument == result.options.instrument
     assert restored.options.scale == result.options.scale
     assert restored.options.exposure == result.options.exposure
@@ -40,14 +48,12 @@ def test_pickle_round_trips_complete_result(instrument_data, tmp_path) -> None:
     assert np.array_equal(restored.models.transmission, result.models.transmission)
     assert np.array_equal(restored.models.sky, result.models.sky)
     assert np.array_equal(restored.models.thermal, result.models.thermal)
-    with pytest.raises(ValueError, match="read-only"):
-        restored.data[0, 0, 0, 0] = 0 * u.electron
     with pytest.raises(FileExistsError):
         result.save(path)
     result.save(path, overwrite=True)
 
 
-def test_fits_stores_datacubes_metadata_masks_and_apertures(
+def test_fits_stores_key_datacubes_and_metadata(
     instrument_data,
     tmp_path,
 ) -> None:
@@ -61,47 +67,37 @@ def test_fits_stores_datacubes_metadata_masks_and_apertures(
             "PRIMARY",
             "WAVELEN",
             "SNR",
-            "MODEL",
-            "TRANSMIS",
-            "SKYMODEL",
-            "THERMAL",
-            "SIGTARG",
-            "SIGSKY",
-            "SIGTHERM",
-            "SIGDARK",
-            "SIGBKG",
-            "SIGTOTAL",
-            "VARTARG",
-            "VARSKY",
-            "VARTHERM",
-            "VARDARK",
-            "VARREAD",
-            "VARTOTAL",
-            "DATA",
-            "PSF",
-            "APMASK0",
-            "APERTURE",
+            "SIGNAL",
+            "BACKGROUND",
+            "VARIANCE",
         }
-        for view in ("SPEC", "MAP"):
-            expected.add(f"AP0{view}SNR")
-            for prefix, fields in (
-                ("SIG", result.apertures[0].signals.__dataclass_fields__),
-                ("VAR", result.apertures[0].variances.__dataclass_fields__),
-            ):
-                expected.update(
-                    f"AP0{view}{prefix}{field.upper()}" for field in fields
-                )
         assert {hdu.name for hdu in hdus} == expected
         assert hdus[0].header["NTARGET"] == 2
         assert hdus[0].header["NSKY"] == 2
-        assert hdus[0].header["NCUBES"] == 2
+        assert "NCUBES" not in hdus[0].header
+        assert "PSFSCALE" not in hdus[0].header
+        assert "PSFFILE" not in hdus[0].header
         assert hdus["SNR"].header["BUNIT"] == "1"
-        assert hdus["TRANSMIS"].header["BUNIT"] == "1"
-        assert hdus["SKYMODEL"].header["BUNIT"] == "W sr-1 m-3"
-        assert hdus["THERMAL"].header["BUNIT"] == "W sr-1 m-3"
-        assert hdus["SIGTARG"].header["BUNIT"] == "electron"
-        assert hdus["VARTOTAL"].header["BUNIT"] == "electron2"
+        assert hdus["SIGNAL"].header["BUNIT"] == "electron"
+        assert hdus["BACKGROUND"].header["BUNIT"] == "electron"
+        assert hdus["VARIANCE"].header["BUNIT"] == "electron2"
         assert hdus["SNR"].header["CTYPE2"] == "XOFFSET"
+        wcs = WCS(hdus["SNR"].header)
+        spectral_pixels = np.array([[0, 0, 0], [1, 0, 0]], dtype=float)
+        spectral_world = wcs.all_pix2world(spectral_pixels, 0)
+        assert np.allclose(
+            spectral_world[:, 0],
+            result.wavelength[:2].to_value(u.m),
+        )
+        reference_pixel = np.array(
+            [[0, (result.snr.shape[1] - 1) / 2, (result.snr.shape[0] - 1) / 2]]
+        )
+        reference_world = wcs.all_pix2world(reference_pixel, 0)[0]
+        assert reference_world[0] == pytest.approx(
+            result.wavelength[0].to_value(u.m)
+        )
+        assert reference_world[1] == pytest.approx(0.0, abs=1e-15)
+        assert reference_world[2] == pytest.approx(0.0, abs=1e-15)
         pixel_scale = (50 * u.mas).to_value(u.deg)
         angle = np.deg2rad(30)
         assert hdus["SNR"].header["CD2_2"] == pytest.approx(
@@ -111,19 +107,19 @@ def test_fits_stores_datacubes_metadata_masks_and_apertures(
         assert hdus["SNR"].header["CD3_2"] == pytest.approx(pixel_scale * np.sin(angle))
         assert hdus["SNR"].header["CD3_3"] == pytest.approx(pixel_scale * np.cos(angle))
         assert hdus["SNR"].data.shape == result.snr.shape
-        assert hdus["TRANSMIS"].data.shape == result.wavelength.shape
-        assert hdus["SKYMODEL"].data.shape == result.wavelength.shape
-        assert hdus["THERMAL"].data.shape == result.wavelength.shape
-        assert hdus["DATA"].data.shape == result.data.shape
-        assert hdus["PSF"].data.shape == result.psf.shape
-        assert hdus["PSF"].header["PIXSCALE"] == pytest.approx(10.0)
-        assert hdus["APMASK0"].data.sum() == 3
-        assert hdus["AP0SPECSNR"].data.shape == result.wavelength.shape
-        assert hdus["AP0MAPSNR"].data.shape == result.snr.shape[:2]
-        assert hdus["AP0SPECSIGTARGET"].header["BUNIT"] == "electron"
-        assert hdus["AP0MAPVARTOTAL"].header["BUNIT"] == "electron2"
-        assert hdus["AP0SPECSNR"].header["APNAME"] == "line"
-        assert hdus["APERTURE"].data["NAME"][0].rstrip() == "line"
+        assert np.array_equal(hdus["SIGNAL"].data, result.signals.target.value)
+        assert np.array_equal(
+            hdus["BACKGROUND"].data,
+            (
+                result.signals.sky
+                + result.signals.thermal
+                + result.signals.dark
+            ).value,
+        )
+        assert np.array_equal(
+            hdus["VARIANCE"].data,
+            result.variances.total.value,
+        )
 
 
 def test_fits_uses_celestial_wcs_for_absolute_pointing(
@@ -142,6 +138,99 @@ def test_fits_uses_celestial_wcs_for_absolute_pointing(
         assert header["CTYPE3"] == "DEC--TAN"
         assert header["CRVAL2"] == pytest.approx(120.0)
         assert header["CRVAL3"] == pytest.approx(25.0)
+        wcs = WCS(header)
+        reference_pixel = np.array(
+            [[0, (result.snr.shape[1] - 1) / 2, (result.snr.shape[0] - 1) / 2]]
+        )
+        reference_world = wcs.all_pix2world(reference_pixel, 0)[0]
+        assert reference_world[0] == pytest.approx(
+            result.wavelength[0].to_value(u.m)
+        )
+        assert reference_world[1] == pytest.approx(120.0)
+        assert reference_world[2] == pytest.approx(25.0)
+
+
+def test_sampled_cube_saves_data_seed_metadata_and_wcs(
+    instrument_data,
+    tmp_path,
+) -> None:
+    result = _result(instrument_data)
+    sample = result.sample(n=2, seed=42)
+    path = tmp_path / "cube-samples.fits"
+
+    sample.save(path)
+
+    with fits.open(path, checksum=True) as hdus:
+        assert {hdu.name for hdu in hdus} == {"PRIMARY", "WAVELEN", "DATA"}
+        assert hdus[0].header["PRODUCT"] == "SAMPLED CUBE"
+        assert hdus[0].header["RNGSEED"] == 42
+        assert hdus[0].header["NREAL"] == 2
+        assert hdus[0].header["INSTRUME"] == result.options.instrument
+        assert hdus["DATA"].header["BUNIT"] == "electron"
+        assert hdus["DATA"].header["CTYPE4"] == "REALIZATION"
+        wcs = WCS(hdus["DATA"].header)
+        spectral_pixels = np.array(
+            [[0, 0, 0, 0], [1, 0, 0, 0]],
+            dtype=float,
+        )
+        spectral_world = wcs.all_pix2world(spectral_pixels, 0)
+        assert np.allclose(
+            spectral_world[:, 0],
+            sample.wavelength[:2].to_value(u.m),
+        )
+        assert np.array_equal(hdus["DATA"].data, sample.data.value)
+        assert np.array_equal(
+            hdus["WAVELEN"].data,
+            sample.wavelength.value,
+        )
+
+    with pytest.raises(ValueError, match="read-only"):
+        sample.data[0, 0, 0, 0] = 0 * u.electron
+    with pytest.raises(FileExistsError):
+        sample.save(path)
+    sample.save(path, overwrite=True)
+
+
+def test_sampled_aperture_saves_data_seed_and_definition(
+    instrument_data,
+    tmp_path,
+) -> None:
+    result = _result(instrument_data)
+    sample = result.apertures[0].sample(n=3, seed=91)
+    path = tmp_path / "aperture-samples.fits"
+
+    sample.save(path)
+
+    with fits.open(path, checksum=True) as hdus:
+        assert {hdu.name for hdu in hdus} == {
+            "PRIMARY",
+            "WAVELEN",
+            "DATA",
+            "MASK",
+        }
+        assert hdus[0].header["PRODUCT"] == "SAMPLED APERTURE"
+        assert hdus[0].header["APERTURE"] == "line"
+        assert hdus[0].header["RNGSEED"] == 91
+        assert hdus[0].header["NREAL"] == 3
+        assert hdus["DATA"].header["BUNIT"] == "electron"
+        assert np.array_equal(hdus["DATA"].data, sample.data.value)
+        assert np.array_equal(hdus["MASK"].data.astype(bool), sample.mask)
+        assert np.array_equal(
+            hdus["WAVELEN"].data,
+            sample.wavelength.value,
+        )
+
+    with pytest.raises(ValueError, match="read-only"):
+        sample.mask[0, 0, 0] = True
+
+
+def test_sample_save_rejects_unknown_extension(instrument_data, tmp_path) -> None:
+    result = _result(instrument_data)
+
+    with pytest.raises(ValueError, match="FITS"):
+        result.sample(seed=1).save(tmp_path / "sample.npy")
+    with pytest.raises(ValueError, match="FITS"):
+        result.apertures[0].sample(seed=1).save(tmp_path / "sample.pkl")
 
 
 def test_save_rejects_unknown_extension(instrument_data, tmp_path) -> None:
@@ -173,11 +262,4 @@ def _result(instrument_data, *, center=None):
         size=(1, 1, 3),
         center=(1, 2, 1.1 * u.micron),
     )
-    return etc.run(
-        include_models=True,
-        include_signals=True,
-        include_variances=True,
-        include_data=True,
-        n_cubes=2,
-        rng=np.random.default_rng(9),
-    )
+    return etc.run(include_models=True)

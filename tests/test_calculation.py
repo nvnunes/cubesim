@@ -32,7 +32,6 @@ def test_sample_data_uses_independent_poisson_and_read_draws() -> None:
         sky=background,
         thermal=np.zeros_like(background.value) * u.electron,
         dark=np.zeros_like(background.value) * u.electron,
-        background=background,
         total=target + background,
     )
     exposure = SimpleNamespace(n_target=2, n_sky=1)
@@ -66,7 +65,6 @@ def test_in_field_data_preserves_shared_sky_estimate_covariance() -> None:
         sky=background,
         thermal=np.zeros((2, 2, 1)) * u.electron,
         dark=np.zeros((2, 2, 1)) * u.electron,
-        background=background,
         total=background,
     )
     sky_mask = np.array([[True, True], [False, False]])
