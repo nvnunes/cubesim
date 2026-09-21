@@ -13,12 +13,15 @@ etc = cubesim.Etc("/path/to/instrument-data")
 
 The directory must contain `etc.ini` at its root. Every filename in that file
 is relative to the same root, must identify an existing regular file, and must
-remain inside the directory after symbolic links are resolved. Cubesim does
-not search package data, the current directory, environment variables,
-registries, or the network.
+remain inside the directory after symbolic links are resolved. A relative
+instrument-data directory is resolved from the current working directory. If
+that path does not exist, cubesim also resolves it from the nearest ancestor
+containing `pyproject.toml`. Referenced files receive no additional package
+data, current-directory, environment-variable, registry, or network fallback.
 
-No other directory names or layout are required. Real instrument definitions
-and scientific data are distributed separately from cubesim.
+No other directory names or layout are required. The repository includes one
+redistributable example under `example/instrument_data`. Real instrument
+definitions and scientific data are distributed separately from cubesim.
 
 ## INI Schema
 
@@ -83,7 +86,8 @@ are no aliases, case folding, inferred parents, or nearest-option
 fallbacks.
 
 Detector QE uses exactly one of `quantum_efficiency`, for a constant value, or
-`quantum_efficiency_file`. Universal optics use `[optics.<name>]`; scoped
+`quantum_efficiency_file`. Universal optics use
+`[optics.<name>]`; scoped
 optics use `[optics.<name>.<disperser_scope>]`, where the scope is a declared
 disperser section. A scoped element applies to every selectable leaf at or
 below that section. The selected path combines universal and applicable scoped

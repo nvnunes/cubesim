@@ -46,13 +46,16 @@ Keep clear boundaries between:
 - PSF input ingestion and validation
 - background, throughput, QE, detector, signal, noise, and SNR models
 - ETC compute and result assembly
-- reusable analysis helpers
+- result visualization
 
 The current implementation keeps the public lifecycle in `cubesim/etc.py`,
 target-model contracts in `cubesim/models.py`, numerical calculation in
 `cubesim/_calculation.py`, immutable result structures in
-`cubesim/_result.py`, instrument-definition and ECSV loading in
-`cubesim/_instrument.py`, and direct PSF loading in `cubesim/_psf.py`.
+`cubesim/_result.py`, shared in-field variance propagation in
+`cubesim/_variance.py`, instrument-definition and ECSV loading in
+`cubesim/_instrument.py`, direct PSF loading in `cubesim/_psf.py`, and public
+result visualization in `cubesim/plotting.py`. Plotting is a submodule API and
+is intentionally not re-exported from the package root.
 
 ## Contract Ownership
 
@@ -66,11 +69,13 @@ inputs as explicit contracts.
   that owns the contract.
 
 An instrument-data directory is explicit caller input and must contain
-`etc.ini` at its root. INI file references are relative, must remain within the
-directory after symlink resolution, and receive no package-data, current
-directory, environment-variable, registry, or network fallback. Detector QE,
-atmospheric transmission, and atmospheric background files use the canonical
-two-column ECSV schemas and units defined in
+`etc.ini` at its root. Relative input paths resolve from the current working
+directory, then from the nearest `pyproject.toml` project root when the current
+path does not exist. INI file references are relative, must remain within the
+instrument-data directory after symlink resolution, and receive no further
+package-data, current-directory, environment-variable, registry, or network
+fallback. Detector QE, atmospheric transmission, and atmospheric background
+files use the canonical two-column ECSV schemas and units defined in
 [`instrument-data.md`](instrument-data.md).
 
 The direct PSF contract accepts only:
@@ -102,13 +107,20 @@ The current setup lifecycle is:
 - configure target and sky integrations with `set_exposure()` and optional
   `set_sky_subtraction()`
 - optionally register apertures with `add_aperture()`
-- execute the deterministic calculation or request noisy realizations with
-  `run()`
+- execute the deterministic calculation with `run()`
+- draw noisy realizations from the result with `sample()`
 
-`run()` always returns immutable S/N and wavelength arrays plus a structured
-snapshot of resolved inputs. Models, detector signals, detector variances, and
-Poisson-plus-Gaussian noisy cubes are opt-in result groups. Results save as a
-complete trusted pickle or as portable FITS datacubes and metadata.
+`run()` always returns immutable S/N, wavelength, signal, and variance arrays
+plus a structured snapshot of resolved inputs. A configured PSF is also
+retained as normalized image data and an angular pixel scale. Detailed model
+products are opt-in through `include_models=True`. Results can draw
+Poisson-plus-Gaussian noisy cubes without mutating the deterministic result.
+Cube and aperture sampling return immutable objects that own their data, random
+seed, interpretation metadata, and FITS persistence.
+Every registered aperture retains integrated signal and variance components,
+wavelength and detector-position projections, and compact state for drawing
+integrated samples. Results save as a complete trusted pickle or as portable
+FITS datacubes and metadata.
 
 The current implementation covers point, Gaussian, Sersic, supplied
 image, and uniform spatial profiles; Gaussian lines in air or vacuum and
@@ -121,10 +133,11 @@ Non-uniform spatial models represent globally normalized integrated-flux
 distributions. Their high- and detector-resolution grids retain only the flux
 that falls within the corresponding sampled field; cubesim does not
 renormalize a profile after field clipping. For in-field subtraction, the
-shared sky estimate is also removed from the expected target signal used for
-cube and aperture S/N. The cube-level signal breakdown continues to describe
-the raw detected components that determine Poisson noise, while aperture-level
-signals describe the sky-subtracted reduction.
+sky mask declares target-free detector spaxels. Target signal is zero there,
+and registered science apertures cannot overlap those spaxels. Sky subtraction
+is an IFU-level operation; aperture signals directly reduce the cube-level
+signal components, while aperture variance propagation retains covariance from
+the shared sky estimate.
 
 Preserve that lifecycle clarity as the repo grows. If a module has a strong
 lifecycle or execution flow, prefer method order that follows that lifecycle.

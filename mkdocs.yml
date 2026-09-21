@@ -1,6 +1,7 @@
 site_name: cubesim
 site_description: Exposure time calculator framework for integral-field spectrographs
 repo_name: cubesim
+repo_url: https://github.com/nvnunes/cubesim
 docs_dir: docs
 strict: true
 

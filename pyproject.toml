@@ -19,6 +19,11 @@ dependencies = [
     "scipy>=1.14.1",
 ]
 
+[project.urls]
+Documentation = "https://github.com/nvnunes/cubesim"
+Repository = "https://github.com/nvnunes/cubesim"
+Issues = "https://github.com/nvnunes/cubesim/issues"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",

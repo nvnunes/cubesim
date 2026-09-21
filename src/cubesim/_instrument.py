@@ -213,13 +213,25 @@ def load_instrument(instrument_data: str | Path) -> InstrumentDefinition:
 
 
 def _resolve_root(instrument_data: str | Path) -> Path:
-    root = Path(instrument_data).expanduser().resolve()
+    requested = Path(instrument_data).expanduser()
+    root = requested.resolve()
+    if not requested.is_absolute() and not root.exists():
+        project_root = _nearest_project_root(Path.cwd())
+        if project_root is not None:
+            root = (project_root / requested).resolve()
     if not root.is_dir():
         raise NotADirectoryError(f"Instrument-data directory does not exist: {root}")
     config_path = root / "etc.ini"
     if not config_path.is_file():
         raise FileNotFoundError(f"Instrument-data directory has no etc.ini: {root}")
     return root
+
+
+def _nearest_project_root(start: Path) -> Path | None:
+    for directory in (start, *start.parents):
+        if (directory / "pyproject.toml").is_file():
+            return directory
+    return None
 
 
 def _validate_section_inventory(parser: configparser.ConfigParser) -> None:

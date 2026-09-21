@@ -49,5 +49,9 @@ Finish with the full test suite for changes that affect:
 Prefer tests of externally visible behavior over tests coupled to internal
 structure.
 
+The full suite executes the root README quickstart and every code cell in the
+bundled example notebooks from isolated temporary copies. Keep those examples
+runnable without relying on generated files or state left in the repository.
+
 Preserve science-visible behavior unless a change is explicitly intended and
 documented.

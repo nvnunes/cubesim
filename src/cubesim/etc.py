@@ -69,8 +69,9 @@ class Etc:
 
     Args:
         instrument_data: Directory containing ``etc.ini`` and the scientific
-            files it references. Relative paths are resolved from this
-            directory.
+            files it references. A relative directory is resolved from the
+            current working directory, then from the nearest project root
+            containing ``pyproject.toml`` when the current path does not exist.
 
     Notes:
         The object is mutable during configuration. Each call to :meth:`run`

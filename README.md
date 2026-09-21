@@ -13,10 +13,12 @@ Its intended calculation scope is:
 - target and source model construction
 - PSF input ingestion and application
 - background, throughput, detector, signal, noise, and SNR computation
+- result-based scientific validation plots
 
 An instrument integration consists only of an `etc.ini` file and the data
-files it references. Real instrument datasets are distributed separately from
-the Python package.
+files it references. The repository includes a redistributable example
+instrument; real instrument datasets are distributed separately from the
+Python package.
 
 `cubesim` does not own PSF simulation. Direct PSFs may be supplied as FITS,
 NPY, or in-memory two-dimensional arrays. FITS files carry `PIXSCALE` in mas
@@ -33,9 +35,9 @@ python -m pip install .
 That path is intended for package use. For local development in this repo, use
 the canonical workflow in `Local Development Setup` below.
 
-CubeSim does not include instrument definitions or scientific data. A
-calculation requires a separately supplied instrument-data directory containing
-`etc.ini` and its referenced files.
+The bundled [`example/instrument_data`](example/instrument_data) directory can
+be used immediately. A real calculation requires a separately supplied
+instrument-data directory containing `etc.ini` and its referenced files.
 
 ## Quickstart: Python API
 
@@ -43,13 +45,13 @@ calculation requires a separately supplied instrument-data directory containing
 import astropy.units as u
 import cubesim
 
-etc = cubesim.Etc("/path/to/instrument-data")
+etc = cubesim.Etc("example/instrument_data")
 etc.configure(
     scale="50mas",
     disperser="r3000.yj",
-    atmosphere="airmass10_pwv10",
+    atmosphere="airmass10",
 )
-etc.set_psf("psf.npy", pixel_scale=10 * u.mas)
+etc.set_psf("psf.fits")
 etc.add_target(
     position=(0 * u.arcsec, 0 * u.arcsec),
     spatial=cubesim.Point(),
@@ -66,18 +68,29 @@ print(result.snr.shape)
 ```
 
 The instrument-data directory must contain `etc.ini` at its root. Paths in
-that file are relative to the same directory; cubesim does not search the
-current directory, package data, environment variables, or the network.
+that file are relative to the same directory. A relative instrument-data path
+may resolve from the working directory or the nearest `pyproject.toml` project
+root; referenced files receive no additional search fallback.
 Direct PSF paths may be absolute or relative to the instrument-data directory.
 
-`result.snr`, `result.wavelength`, and `result.options` are always present.
-Pass `include_models`, `include_signals`, `include_variances`, or
-`include_data` to `run()` for the corresponding optional immutable groups.
-The model group includes the target models and the detector-grid atmospheric
-transmission, sky-radiance, and thermal-radiance models.
+`result.snr`, `result.wavelength`, `result.options`, `result.signals`, and
+`result.variances` are always present. Pass `include_models=True` to `run()`
+to retain target models and the detector-grid atmospheric transmission,
+sky-radiance, and thermal-radiance models. Draw noisy, sky-subtracted detector
+cubes with `sampled_cube = result.sample(seed=42)`, inspect them through
+`sampled_cube.data`, and save them with `sampled_cube.save("sampled_cube.fits")`.
 Call `result.save("result.pkl")` for a complete trusted Python round trip or
-`result.save("result.fits")` for portable datacubes, metadata, masks, aperture
-measurements, units, and WCS.
+`result.save("result.fits")` for portable S/N, target-signal, background, and
+total-variance cubes with wavelength, units, metadata, and WCS.
+
+Plot immutable results through the dedicated submodule. Functions return
+Matplotlib figures without displaying or saving them:
+
+```python
+import cubesim.plotting as plotting
+
+figure = plotting.plot_snr(result, wavelength=1.1 * u.micron)
+```
 
 The current implementation covers analytic and supplied spatial
 profiles, Gaussian-line and tabulated spectra, constant velocity, rotating
@@ -86,6 +99,14 @@ achromatic direct PSFs. Spatially varying velocities are applied on the
 high-resolution model before PSF and line-spread-function convolution.
 
 Python API guide: [`docs/api.md`](docs/api.md)
+
+## Example Instrument
+
+[`example/README.md`](example/README.md) describes the bundled, redistributable
+example instrument and the provenance of its Gemini North Maunakea atmosphere
+tables. Its rounded instrument properties and synthetic PSF are intended to
+demonstrate and validate cubesim, not to predict GIRMOS or another real
+instrument.
 
 ## Documentation
 

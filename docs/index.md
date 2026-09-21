@@ -7,13 +7,15 @@ spectrographs. It provides:
 - composable spatial, spectral, and velocity target models
 - direct achromatic PSF input
 - nodding and in-field sky subtraction
-- signal-to-noise datacubes with optional model, signal, variance, and noisy
-  data products
-- three-dimensional aperture measurements
-- FITS and pickle result persistence
+- signal-to-noise datacubes with detector signal and variance components
+- reproducible sampled cubes and integrated aperture measurements
+- three-dimensional aperture measurements with spectrum and map diagnostics
+- result-based plotting for model, signal, S/N, PSF, and aperture validation
+- FITS and pickle result persistence, plus FITS sample persistence
 
-CubeSim supplies the calculation framework and data formats. Instrument
-definitions and scientific assets are distributed separately.
+CubeSim supplies the calculation framework and data formats. The repository
+includes one redistributable example at `example/instrument_data`; real
+instrument definitions and scientific assets are distributed separately.
 
 ## Start Here
 
@@ -25,6 +27,7 @@ definitions and scientific assets are distributed separately.
   - [ETC](reference/etc.md)
   - [Target Models](reference/models.md)
   - [Results And Persistence](reference/results.md)
+  - [Plotting](reference/plotting.md)
 - Contributor documentation:
   - [Testing and verification](testing.md)
   - [Development setup](development.md)

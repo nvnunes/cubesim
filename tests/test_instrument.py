@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import astropy.units as u
@@ -10,6 +11,27 @@ import pytest
 from astropy.table import QTable
 
 import cubesim
+
+
+def test_constructor_resolves_relative_path_from_project_root(
+    instrument_data,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project = tmp_path / "project"
+    nested = project / "notebooks"
+    destination = project / "example" / "instrument_data"
+    nested.mkdir(parents=True)
+    destination.mkdir(parents=True)
+    for source in instrument_data.iterdir():
+        if source.is_file():
+            shutil.copy2(source, destination)
+    (project / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+    monkeypatch.chdir(nested)
+
+    etc = cubesim.Etc("example/instrument_data")
+
+    assert etc._instrument.root == destination.resolve()
 
 
 def test_configure_resolves_options_and_ordered_optical_path(instrument_data) -> None:

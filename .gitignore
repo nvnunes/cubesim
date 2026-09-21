@@ -10,3 +10,5 @@ build/
 site/
 *.egg-info/
 src/*.egg-info/
+/example/etc_result.fits
+/example/sampled_cube.fits
