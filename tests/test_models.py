@@ -81,7 +81,7 @@ def test_sersic_rejects_invalid_parameters(kwargs) -> None:
 def test_uniform_surface_brightness_runs_without_psf(instrument_data) -> None:
     etc = _base_etc(instrument_data)
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Uniform(),
         spectrum=cubesim.GaussianLines(
             wavelength=1.1 * u.micron,
@@ -109,7 +109,7 @@ def test_uniform_and_integrated_flux_pairing_is_enforced(instrument_data) -> Non
 
     with pytest.raises(u.UnitConversionError, match="surface-brightness"):
         etc.add_target(
-            position=(0 * u.arcsec, 0 * u.arcsec),
+            ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
             spatial=cubesim.Uniform(),
             spectrum=integrated,
         )
@@ -120,7 +120,7 @@ def test_sersic_and_constant_velocity_use_existing_compute_operators(
 ) -> None:
     etc = _base_etc(instrument_data)
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Sersic(
             effective_radius=0.08 * u.arcsec,
             index=1.0,
@@ -151,7 +151,7 @@ def test_sersic_and_constant_velocity_use_existing_compute_operators(
 def test_analytic_spatial_profile_retains_only_in_field_flux(instrument_data) -> None:
     etc = _base_etc(instrument_data)
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Gaussian(fwhm=10 * u.arcsec),
         spectrum=cubesim.GaussianLines(
             wavelength=1.1 * u.micron,
@@ -171,7 +171,7 @@ def test_analytic_spatial_profile_retains_only_in_field_flux(instrument_data) ->
 def test_out_of_band_gaussian_line_contributes_zero(instrument_data) -> None:
     etc = _base_etc(instrument_data)
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Point(),
         spectrum=cubesim.GaussianLines(
             wavelength=100 * u.micron,
@@ -192,7 +192,7 @@ def test_out_of_band_gaussian_line_contributes_zero(instrument_data) -> None:
 def test_partially_clipped_point_preserves_resampled_flux(instrument_data) -> None:
     etc = _base_etc(instrument_data)
     etc.add_target(
-        position=(-0.102 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0.102 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Point(),
         spectrum=cubesim.GaussianLines(
             wavelength=1.1 * u.micron,
@@ -220,7 +220,7 @@ def test_clipped_point_velocity_cube_preserves_resampled_flux(instrument_data) -
     ):
         etc = _base_etc(instrument_data)
         etc.add_target(
-            position=(-0.102 * u.arcsec, 0 * u.arcsec),
+            ifu_offset=(0.102 * u.arcsec, 0 * u.arcsec),
             spatial=cubesim.Point(),
             spectrum=cubesim.GaussianLines(
                 wavelength=1.1 * u.micron,
@@ -251,7 +251,7 @@ def test_tabulated_spectrum_runs_on_independent_grid(instrument_data) -> None:
     )
     etc = _base_etc(instrument_data)
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Point(),
         spectrum=spectrum,
     )
@@ -312,7 +312,7 @@ def test_tabulated_spectrum_must_cover_selected_disperser(instrument_data) -> No
     )
     etc = _base_etc(instrument_data)
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Point(),
         spectrum=spectrum,
     )
@@ -336,7 +336,7 @@ def test_spatial_image_is_copied_normalized_and_sky_oriented(
     )
     etc = _base_etc(instrument_data)
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=model,
         spectrum=cubesim.GaussianLines(
             wavelength=1.1 * u.micron,
@@ -407,7 +407,7 @@ def test_point_target_centroid_is_preserved_through_model_stages(instrument_data
 ):
     etc = _base_etc(instrument_data)
     etc.add_target(
-        position=(-0.025 * u.arcsec, 0.025 * u.arcsec),
+        ifu_offset=(0.025 * u.arcsec, 0.025 * u.arcsec),
         spatial=cubesim.Point(),
         spectrum=cubesim.GaussianLines(
             wavelength=1.1 * u.micron,
@@ -623,7 +623,7 @@ def test_velocity_margin_requires_tabulated_spectrum_coverage(instrument_data) -
     )
     etc = _base_etc(instrument_data)
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Gaussian(fwhm=0.08 * u.arcsec),
         spectrum=spectrum,
         velocity=field,
@@ -654,7 +654,7 @@ def _velocity_etc(
     etc = _base_etc(instrument_data)
     etc.set_pointing(position_angle=pointing_angle)
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Gaussian(fwhm=0.08 * u.arcsec),
         spectrum=cubesim.GaussianLines(
             wavelength=1.1 * u.micron,
@@ -678,7 +678,12 @@ def _positioned_spatial(
     etc = _base_etc(instrument_data)
     etc.set_pointing(position_angle=pointing_angle)
     etc.add_target(
-        position=position,
+        pointing_offset=(
+            -position[0] * np.cos(pointing_angle.to_value(u.rad))
+            + position[1] * np.sin(pointing_angle.to_value(u.rad)),
+            position[0] * np.sin(pointing_angle.to_value(u.rad))
+            + position[1] * np.cos(pointing_angle.to_value(u.rad)),
+        ),
         spatial=spatial,
         spectrum=cubesim.GaussianLines(
             wavelength=1.1 * u.micron,

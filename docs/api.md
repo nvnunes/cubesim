@@ -40,12 +40,55 @@ from astropy.coordinates import SkyCoord
 
 etc.set_pointing(
     position_angle=30 * u.deg,
-    center=SkyCoord("12h00m00s", "+30d00m00s"),
+    sky_position=SkyCoord("12h00m00s", "+30d00m00s"),
 )
 ```
 
-The optional scalar `SkyCoord` supplies celestial WCS metadata when a result is
-saved as FITS. Without it, FITS products use east and north angular offsets.
+The optional scalar `SkyCoord` locates the telescope pointing on the sky.
+Without it, FITS products use angular offsets rather than celestial WCS.
+The IFU is centered on the pointing by default. Move or rotate it with one of:
+
+```python
+etc.set_ifu_position(pointing_offset=(0.5 * u.arcsec, 0 * u.arcsec), rotation=15 * u.deg)
+# With an absolute telescope pointing, a sky coordinate is also accepted:
+etc.set_ifu_position(sky_position=SkyCoord("12h00m00.02s", "+30d00m00s"))
+```
+
+The second call replaces the first. IFU rotation is relative to the telescope
+pointing angle; no rotation is inferred from where the IFU is placed.
+
+## Coordinate And Array Conventions
+
+Absolute sky positions use `SkyCoord` with right ascension and declination.
+Increasing right ascension points east; increasing declination points north.
+These are sky coordinates, not detector `x` and `y`. CubeSim converts absolute
+positions to ICRS for geometry and FITS WCS; result options retain the supplied
+coordinate frames.
+
+Pointing and IFU offsets both use Cartesian `(x, y)` coordinates. At zero
+telescope position angle, pointing `+x` points west (opposite increasing right
+ascension) and `+y` points north. Let `theta` be the telescope position angle
+and `phi` the IFU rotation relative to the pointing frame. A positive angle
+turns the corresponding `+y` axis eastward. The IFU detector `+y` angle is
+`theta + phi`. A sky `(east, north)` offset from the relevant frame center maps
+to local `(x, y)` as:
+
+```text
+x = -east * cos(angle) + north * sin(angle)
+y =  east * sin(angle) + north * cos(angle)
+```
+
+Use `angle = theta` for pointing axes and `angle = theta + phi` for IFU axes.
+Thus an eastward target moves toward decreasing local `x` at zero position
+angle. Within either local `(x, y)` frame, ordinary Cartesian polar conversion
+still applies: `x = r cos(alpha)` and `y = r sin(alpha)`, with `alpha` measured
+from `+x` toward `+y`. This `alpha` is not a sky position angle.
+
+Image arrays use NumPy index order `[row_y, column_x]`: the first axis is `y`
+and the second is `x`. Increasing row follows detector `+y`; increasing column
+follows detector `+x`. Result cubes have shape `(y, x, wavelength)`. Pixel-index
+selectors such as aperture `center` and plotting `position` use `(y, x)` order
+because they index these arrays; they are not Cartesian offset pairs.
 
 ## Build Targets
 
@@ -73,15 +116,23 @@ velocity = cubesim.RotatingDisk(
 )
 
 etc.add_target(
-    position=(0.1 * u.arcsec, -0.2 * u.arcsec),
+    ifu_offset=(0.1 * u.arcsec, -0.2 * u.arcsec),
     spatial=target,
     spectrum=spectrum,
     velocity=velocity,
 )
 ```
 
-Target positions are `(east, north)` angular offsets. Add as many targets as
-needed; their detector-resolution models are combined into one target cube.
+Choose exactly one target position: `ifu_offset=(x, y)` follows the IFU,
+`pointing_offset=(x, y)` follows the telescope pointing, and
+`sky_position=SkyCoord(...)` stays fixed on the sky. An absolute sky position
+requires an absolute telescope pointing. Position forms are retained until
+`run()`: an `ifu_offset` keeps its detector offset as the pointing or IFU moves;
+a `pointing_offset` keeps its telescope-frame offset but can move on the
+detector when the IFU placement or rotation changes; a `sky_position` remains
+fixed on the sky and can move on the detector when the pointing or IFU changes.
+Add as many targets as needed; their detector-resolution models are combined
+into one target cube.
 
 Non-uniform profiles use integrated flux. `Uniform` is the only spatial model
 that uses surface-brightness flux. Non-uniform profiles are normalized over the
@@ -115,6 +166,8 @@ etc.set_psf("psf.npy", pixel_scale=10 * u.mas)
 ```
 
 The PSF must be finite, nonnegative, and have positive total flux. CubeSim
+interprets a direct PSF array in IFU detector `[y, x]` axes and does not rotate
+it when the telescope position angle or IFU rotation changes. CubeSim
 measures its centroid from a copy smoothed by a 0.5-pixel Gaussian, using pixel
 centers as coordinates. If either centroid coordinate is at least 0.01 pixel
 from the geometric center, the original array is shifted with cubic
@@ -379,7 +432,7 @@ configuration.
 ## Result Independence
 
 Results are immutable snapshots. Arrays and quantities are read-only, and the
-resolved options own their target configuration. Reconfiguring or reusing the
+result options own their target configuration. Reconfiguring or reusing the
 originating `Etc` cannot retroactively change an existing result.
 
 The current API implements forward exposure-time calculations with one

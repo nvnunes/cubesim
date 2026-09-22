@@ -12,7 +12,7 @@ Every result contains:
 | --- | --- | --- |
 | `snr` | Dimensionless signal-to-noise cube | `(y, x, wavelength)` |
 | `wavelength` | Detector wavelength coordinate | `(wavelength,)` |
-| `options` | Structured snapshot of resolved inputs | scalar object |
+| `options` | Structured snapshot of configured inputs and resolved geometry | scalar object |
 | `signals` | Target, sky, thermal, dark, and total electron cubes | `(y, x, wavelength)` |
 | `variances` | Target, sky, thermal, dark, read, and total variance cubes | `(y, x, wavelength)` |
 | `apertures` | Registered aperture results | tuple |
@@ -30,19 +30,29 @@ PSF; in that case, neither attribute is present. If a PSF is configured for a
 uniform-only calculation, it is retained in the result even though spatial
 convolution is unnecessary and is not applied.
 
-The cube axis order is always `(y, x, wavelength)` in Python. The optional
+The cube axis order is always `(y, x, wavelength)` in Python; see the
+[coordinate and array conventions](../api.md#coordinate-and-array-conventions)
+for how these indices relate to sky offsets. The optional
 `models` group is absent when not requested; it is not present with a value of
 `None`.
 
 ## Options
 
-`result.options` records:
+`result.options` records instrument, scale, detector spaxel scale, disperser,
+atmosphere, PSF pixel scale and source path when applicable, and resolved
+exposure and sky-subtraction configuration. Its geometry fields are:
 
-- instrument, scale, detector spaxel scale, disperser, and atmosphere names
-- pointing position angle and optional absolute center
-- an owned snapshot of every target
-- PSF pixel scale and source path when applicable
-- resolved exposure and sky-subtraction configuration
+| Field | Meaning |
+| --- | --- |
+| `position_angle` | Telescope pointing `+y` angle east of north |
+| `pointing_center` | Supplied absolute telescope `SkyCoord`, or `None` |
+| `ifu_position` | Supplied pointing offset or sky position and relative `rotation` |
+| `ifu_center` | Resolved IFU center in ICRS, or `None` without an absolute pointing |
+| `ifu_position_angle` | Detector `+y` angle: telescope angle plus IFU rotation |
+| `targets` | Owned requests retaining each target's supplied position form and models |
+
+Supplied `SkyCoord` frames are retained in `pointing_center`, `ifu_position`,
+and `targets`; CubeSim uses ICRS to resolve their geometry.
 
 `result.options.exposure` contains `time`, `n`, `n_target`, `n_sky`,
 `target_time`, `sky_time`, and `total_time`. The sky-subtraction options contain
@@ -182,8 +192,11 @@ apertures, masks, or random samples. Use pickle when the complete result object
 is required.
 
 Image units are written in FITS metadata. Cube WCS uses celestial coordinates
-when `set_pointing(center=...)` supplied an absolute center and angular offsets
-otherwise.
+when `set_pointing(sky_position=...)` supplied an absolute telescope center and
+`XOFFSET` and `YOFFSET` otherwise. Those non-celestial world coordinates are
+east and north angular offsets from the IFU center, not detector `(x, y)`
+indices; the WCS rotates detector axes by the combined IFU position angle. For
+an off-axis IFU, celestial WCS uses the IFU center, not the telescope center.
 
 The primary header records the resolved calculation metadata:
 

@@ -75,7 +75,7 @@ def result(instrument_data):
         atmosphere="airmass10_pwv10",
     )
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Point(),
         spectrum=cubesim.GaussianLines(
             wavelength=1.1 * u.micron,
@@ -103,7 +103,7 @@ def _minimal_etc(instrument_data):
         atmosphere="airmass10_pwv10",
     )
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Uniform(),
         spectrum=cubesim.GaussianLines(
             wavelength=1.1 * u.micron,
@@ -572,7 +572,7 @@ def test_position_range_snr_preserves_in_field_covariance(instrument_data):
         atmosphere="airmass10_pwv10",
     )
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Point(),
         spectrum=cubesim.GaussianLines(
             wavelength=1.1 * u.micron,
@@ -902,7 +902,7 @@ def test_plotting_reports_missing_models_and_psf(instrument_data):
         atmosphere="airmass10_pwv10",
     )
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Uniform(),
         spectrum=cubesim.GaussianLines(
             wavelength=1.1 * u.micron,

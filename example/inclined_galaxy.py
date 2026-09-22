@@ -17,7 +17,7 @@ def configure(etc: cubesim.Etc) -> None:
     )
     etc.set_psf("psf.fits")
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Sersic(
             effective_radius=0.15 * u.arcsec,
             index=1.0,

@@ -52,7 +52,7 @@ def test_example_psf_and_calculation_use_public_api() -> None:
     )
     etc.set_psf("psf.fits")
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Point(),
         spectrum=cubesim.GaussianLines(
             wavelength=1.2 * u.micron,

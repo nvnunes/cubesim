@@ -35,7 +35,7 @@ def test_run_requires_resolved_calculation_state(instrument_data) -> None:
         etc.run()
 
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Point(),
         spectrum=_line(),
     )
@@ -148,10 +148,10 @@ def test_result_snapshot_freezes_nested_model_and_pointing_data(
 ) -> None:
     etc = _base_etc(instrument_data)
     etc.set_pointing(
-        center=SkyCoord(ra=120 * u.deg, dec=25 * u.deg, frame="icrs")
+        sky_position=SkyCoord(ra=120 * u.deg, dec=25 * u.deg, frame="icrs")
     )
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.SpatialImage(np.ones((3, 3)), pixel_scale=10 * u.mas),
         spectrum=_line(),
     )
@@ -218,7 +218,7 @@ def test_default_result_includes_core_groups_but_not_models(instrument_data) -> 
 def test_uniform_target_result_has_no_psf_snapshot(instrument_data) -> None:
     etc = _base_etc(instrument_data)
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Uniform(),
         spectrum=cubesim.GaussianLines(
             wavelength=1.1 * u.micron,
@@ -503,7 +503,7 @@ def test_repeated_runs_preserve_results_and_combine_targets(instrument_data) -> 
     first_combined = first.models.combined.copy()
 
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Point(),
         spectrum=_line(),
     )
@@ -525,7 +525,7 @@ def test_caller_owned_arrays_are_copied(instrument_data) -> None:
     sky_mask[0] = True
     etc = _base_etc(instrument_data)
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Point(),
         spectrum=_line(),
     )
@@ -647,7 +647,7 @@ def test_custom_aperture_mask_is_revalidated_against_cube(instrument_data) -> No
 def _configured_etc(instrument_data) -> cubesim.Etc:
     etc = _base_etc(instrument_data)
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Point(),
         spectrum=_line(),
     )

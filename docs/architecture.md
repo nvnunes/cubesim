@@ -62,6 +62,11 @@ is intentionally not re-exported from the package root.
 Treat instrument configs, their file references, direct PSF inputs, and ETC
 inputs as explicit contracts.
 
+The public [coordinate and array conventions](api.md#coordinate-and-array-conventions)
+distinguish sky offsets, detector Cartesian axes, and NumPy index order. Keep
+their conversion at an explicit boundary when extending positioning or PSF
+integration.
+
 - Validate early with actionable errors.
 - Avoid silent coercions and hidden fallback behavior.
 - Keep one obvious owner per contract.
@@ -102,6 +107,8 @@ The current setup lifecycle is:
 - construct `Etc` with an explicit instrument-data directory
 - select an exact scale, selectable disperser leaf, and atmosphere
   with `configure()`
+- optionally set an absolute telescope pointing and place or rotate the IFU
+  within its field of regard
 - add one or more composed spatial and spectral targets with `add_target()`
 - configure a direct PSF with `set_psf()`
 - configure target and sky integrations with `set_exposure()` and optional

@@ -42,6 +42,23 @@ class _Target:
 
 
 @dataclass(frozen=True, slots=True)
+class _TargetRequest:
+    ifu_offset: tuple[u.Quantity, u.Quantity] | None
+    pointing_offset: tuple[u.Quantity, u.Quantity] | None
+    sky_position: SkyCoord | None
+    spatial: Point | Gaussian | Sersic | SpatialImage | Uniform
+    spectrum: GaussianLines | TabulatedSpectrum
+    velocity: ConstantVelocity | RotatingDisk | VelocityField | None
+
+
+@dataclass(frozen=True, slots=True)
+class _IfuPosition:
+    pointing_offset: tuple[u.Quantity, u.Quantity] | None
+    sky_position: SkyCoord | None
+    rotation: u.Quantity
+
+
+@dataclass(frozen=True, slots=True)
 class _ExposureRequest:
     time: u.Quantity
     n: int | None
@@ -82,7 +99,7 @@ class Etc:
         self._instrument = load_instrument(instrument_data)
         self._selection: InstrumentSelection | None = None
         self._psf: Psf | None = None
-        self._targets: list[_Target] = []
+        self._targets: list[_TargetRequest] = []
         self._exposure: _ExposureRequest | None = None
         self._sky_subtraction = _SkySubtraction(
             method="nodding",
@@ -91,7 +108,8 @@ class Etc:
         )
         self._apertures: list[_Aperture] = []
         self._position_angle = 0 * u.deg
-        self._pointing_center: Any | None = None
+        self._pointing_center: SkyCoord | None = None
+        self._ifu_position = _IfuPosition((0 * u.deg, 0 * u.deg), None, 0 * u.deg)
 
     def configure(
         self,
@@ -120,29 +138,58 @@ class Etc:
         self,
         *,
         position_angle: u.Quantity = 0 * u.deg,
-        center: Any | None = None,
+        sky_position: SkyCoord | None = None,
     ) -> None:
-        """Set IFU orientation and an optional absolute field center.
+        """Set telescope field orientation and optional absolute sky center.
 
         Args:
-            position_angle: Scalar angular position angle measured east of
-                north.
-            center: Optional scalar :class:`astropy.coordinates.SkyCoord` at
-                the field center. FITS output uses celestial WCS when supplied
-                and angular offsets otherwise.
+            position_angle: Sky position angle of telescope-frame ``+y``,
+                measured east of north. At zero, ``+x`` points west and
+                ``+y`` points north.
+            sky_position: Optional scalar absolute telescope pointing center.
+                Geometry is resolved in ICRS; result options retain the
+                supplied coordinate frame.
         """
 
-        self._position_angle = _angle(position_angle, "position_angle")
-        if center is not None and (
-            not isinstance(center, SkyCoord) or not center.isscalar
-        ):
-            raise TypeError("center must be a scalar astropy.coordinates.SkyCoord.")
+        angle = _angle(position_angle, "position_angle")
+        center = _sky_position(sky_position, "sky_position")
+        self._position_angle = angle
         self._pointing_center = center
+
+    def set_ifu_position(
+        self,
+        *,
+        pointing_offset: tuple[u.Quantity, u.Quantity] | None = None,
+        sky_position: SkyCoord | None = None,
+        rotation: u.Quantity = 0 * u.deg,
+    ) -> None:
+        """Place and rotate the IFU within the telescope pointing frame.
+
+        Exactly one of ``pointing_offset`` and ``sky_position`` is required.
+        The offset is ``(x, y)`` in telescope axes; rotation is relative to
+        those axes. The default IFU placement is the pointing center.
+        """
+
+        if (pointing_offset is None) == (sky_position is None):
+            raise ValueError(
+                "Provide exactly one of pointing_offset and sky_position."
+            )
+        offset = (
+            _xy_offset(pointing_offset, "pointing_offset")
+            if pointing_offset is not None
+            else None
+        )
+        sky = _sky_position(sky_position, "sky_position")
+        if sky is not None and self._pointing_center is None:
+            raise ValueError("sky_position requires an absolute telescope pointing.")
+        self._ifu_position = _IfuPosition(offset, sky, _angle(rotation, "rotation"))
 
     def add_target(
         self,
         *,
-        position: tuple[u.Quantity, u.Quantity],
+        ifu_offset: tuple[u.Quantity, u.Quantity] | None = None,
+        pointing_offset: tuple[u.Quantity, u.Quantity] | None = None,
+        sky_position: SkyCoord | None = None,
         spatial: Point | Gaussian | Sersic | SpatialImage | Uniform,
         spectrum: GaussianLines | TabulatedSpectrum,
         velocity: ConstantVelocity | RotatingDisk | VelocityField | None = None,
@@ -150,8 +197,11 @@ class Etc:
         """Append one explicitly composed target to the calculation.
 
         Args:
-            position: ``(east, north)`` angular offset from the pointing
-                center.
+            ifu_offset: ``(x, y)`` offset in IFU detector axes.
+            pointing_offset: ``(x, y)`` offset in telescope field axes.
+            sky_position: Absolute scalar sky coordinate in any frame
+                convertible to ICRS. Exactly one target position form is
+                required.
             spatial: Spatial-profile model. ``Uniform`` requires a spectrum
                 in surface-brightness units; all other profiles require
                 integrated flux.
@@ -169,12 +219,22 @@ class Etc:
             (ConstantVelocity, RotatingDisk, VelocityField),
         ):
             raise TypeError("velocity must be a cubesim velocity model or None.")
-        if not isinstance(position, tuple) or len(position) != 2:
-            raise TypeError("position must be an (east, north) tuple.")
-        resolved_position = (
-            _angle(position[0], "position east"),
-            _angle(position[1], "position north"),
+        positions = (ifu_offset, pointing_offset, sky_position)
+        if sum(value is not None for value in positions) != 1:
+            raise ValueError(
+                "Provide exactly one of ifu_offset, pointing_offset, and sky_position."
+            )
+        ifu_offset = (
+            _xy_offset(ifu_offset, "ifu_offset") if ifu_offset is not None else None
         )
+        pointing_offset = (
+            _xy_offset(pointing_offset, "pointing_offset")
+            if pointing_offset is not None
+            else None
+        )
+        sky_position = _sky_position(sky_position, "sky_position")
+        if sky_position is not None and self._pointing_center is None:
+            raise ValueError("sky_position requires an absolute telescope pointing.")
         surface_brightness = spectrum.flux.unit.is_equivalent(
             u.erg / (u.s * u.cm**2 * u.arcsec**2)
         ) or spectrum.flux.unit.is_equivalent(
@@ -186,8 +246,10 @@ class Etc:
                 "models require integrated flux."
             )
         self._targets.append(
-            _Target(
-                position=resolved_position,
+            _TargetRequest(
+                ifu_offset=ifu_offset,
+                pointing_offset=pointing_offset,
+                sky_position=sky_position,
                 spatial=spatial,
                 spectrum=spectrum,
                 velocity=velocity,
@@ -204,13 +266,16 @@ class Etc:
 
         Args:
             psf: FITS filename, NPY filename, or in-memory two-dimensional
-                array. Relative paths are resolved against the instrument-data
+                array indexed ``[y, x]`` and oriented to detector axes.
+                Relative paths are resolved against the instrument-data
                 directory.
             pixel_scale: Positive angular pixel scale required for NPY and
                 in-memory inputs. FITS inputs instead read ``PIXSCALE`` in
                 milliarcseconds per pixel.
 
         Calling this method again replaces the previous PSF.
+        Direct PSFs are already in IFU detector axes and are not rotated when
+        the telescope or IFU orientation changes.
         """
 
         self._psf = load_psf(
@@ -313,8 +378,8 @@ class Etc:
             size: Positive integer ``(y, x, wavelength)`` size for a
                 rectangular aperture.
             center: Optional rectangle center. Spatial coordinates are detector
-                pixels; the spectral coordinate may be a pixel or scalar
-                wavelength.
+                pixel indices in ``(y, x)`` order; the spectral coordinate may
+                be a pixel or scalar wavelength.
             start: Optional rectangle start coordinate using the same coordinate
                 forms as ``center``.
             mask: Nonempty Boolean mask with the exact output shape
@@ -387,15 +452,21 @@ class Etc:
         if not isinstance(include_models, bool):
             raise TypeError("include_models must be a Boolean value.")
         selection, psf, exposure = self._validate_and_resolve()
+        ifu_offset, ifu_center = self._resolve_ifu_position()
+        ifu_angle = self._position_angle + self._ifu_position.rotation
+        targets = tuple(
+            self._resolve_target(target, ifu_offset, ifu_center, ifu_angle)
+            for target in self._targets
+        )
         output = calculate(
             instrument=self._instrument,
             selection=selection,
-            targets=tuple(self._targets),
+            targets=targets,
             psf=psf,
             exposure=exposure,
             sky_subtraction=self._sky_subtraction,
             apertures=tuple(self._apertures),
-            position_angle=self._position_angle,
+            position_angle=ifu_angle,
         )
         sky_mask = self._sky_subtraction.mask
         if sky_mask is not None:
@@ -409,6 +480,9 @@ class Etc:
             atmosphere=selection.atmosphere.name,
             position_angle=self._position_angle,
             pointing_center=self._pointing_center,
+            ifu_position=self._ifu_position,
+            ifu_center=ifu_center,
+            ifu_position_angle=ifu_angle,
             targets=tuple(self._targets),
             psf_pixel_scale=psf.pixel_scale if psf is not None else None,
             psf_path=psf.path if psf is not None else None,
@@ -430,6 +504,56 @@ class Etc:
             read_noise=self._instrument.detector.read_noise,
             psf=psf.data if psf is not None else None,
             psf_pixel_scale=psf.pixel_scale if psf is not None else None,
+        )
+
+    def _resolve_ifu_position(
+        self,
+    ) -> tuple[tuple[u.Quantity, u.Quantity], SkyCoord | None]:
+        request = self._ifu_position
+        if request.sky_position is not None:
+            if self._pointing_center is None:
+                raise ValueError(
+                    "IFU sky_position requires an absolute telescope pointing."
+                )
+            ifu_center = _icrs_position(request.sky_position)
+            east, north = _icrs_position(self._pointing_center).spherical_offsets_to(
+                ifu_center
+            )
+            return _sky_to_xy(east, north, self._position_angle), ifu_center
+        offset = request.pointing_offset
+        if self._pointing_center is None:
+            return offset, None
+        east, north = _xy_to_sky(*offset, self._position_angle)
+        return offset, _icrs_position(self._pointing_center).spherical_offsets_by(
+            east, north
+        )
+
+    def _resolve_target(
+        self,
+        target: _TargetRequest,
+        ifu_offset: tuple[u.Quantity, u.Quantity],
+        ifu_center: SkyCoord | None,
+        ifu_angle: u.Quantity,
+    ) -> _Target:
+        if target.ifu_offset is not None:
+            east, north = _xy_to_sky(*target.ifu_offset, ifu_angle)
+        elif target.pointing_offset is not None:
+            x = target.pointing_offset[0] - ifu_offset[0]
+            y = target.pointing_offset[1] - ifu_offset[1]
+            east, north = _xy_to_sky(x, y, self._position_angle)
+        else:
+            if ifu_center is None:
+                raise ValueError(
+                    "Target sky_position requires an absolute telescope pointing."
+                )
+            east, north = ifu_center.spherical_offsets_to(
+                _icrs_position(target.sky_position)
+            )
+        return _Target(
+            position=(east, north),
+            spatial=target.spatial,
+            spectrum=target.spectrum,
+            velocity=target.velocity,
         )
 
     def _validate_and_resolve(
@@ -501,6 +625,47 @@ def _angle(value: Any, name: str) -> u.Quantity:
     if not np.isfinite(resolved.value):
         raise ValueError(f"{name} must be finite.")
     return resolved
+
+
+def _xy_offset(value: Any, name: str) -> tuple[u.Quantity, u.Quantity]:
+    if not isinstance(value, tuple) or len(value) != 2:
+        raise TypeError(f"{name} must be an (x, y) angular tuple.")
+    return _angle(value[0], f"{name} x"), _angle(value[1], f"{name} y")
+
+
+def _sky_position(value: Any, name: str) -> SkyCoord | None:
+    if value is None:
+        return None
+    if not isinstance(value, SkyCoord) or not value.isscalar:
+        raise TypeError(f"{name} must be a scalar astropy.coordinates.SkyCoord.")
+    if not np.isfinite(value.icrs.ra.to_value(u.deg)) or not np.isfinite(
+        value.icrs.dec.to_value(u.deg)
+    ):
+        raise ValueError(f"{name} must have finite coordinates.")
+    return value.copy()
+
+
+def _icrs_position(value: SkyCoord) -> SkyCoord:
+    # SkyCoord retains source-frame attributes after .icrs; offsets require equal frames.
+    return SkyCoord(value.icrs.frame)
+
+
+def _xy_to_sky(
+    x: u.Quantity, y: u.Quantity, position_angle: u.Quantity
+) -> tuple[u.Quantity, u.Quantity]:
+    angle = position_angle.to_value(u.rad)
+    east = -x * np.cos(angle) + y * np.sin(angle)
+    north = x * np.sin(angle) + y * np.cos(angle)
+    return east, north
+
+
+def _sky_to_xy(
+    east: u.Quantity, north: u.Quantity, position_angle: u.Quantity
+) -> tuple[u.Quantity, u.Quantity]:
+    angle = position_angle.to_value(u.rad)
+    x = -east * np.cos(angle) + north * np.sin(angle)
+    y = east * np.sin(angle) + north * np.cos(angle)
+    return x, y
 
 
 def _positive_time(value: Any) -> u.Quantity:

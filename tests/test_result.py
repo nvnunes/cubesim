@@ -245,9 +245,9 @@ def _result(instrument_data, *, center=None):
         disperser="r3000.yj",
         atmosphere="airmass10_pwv10",
     )
-    etc.set_pointing(position_angle=30 * u.deg, center=center)
+    etc.set_pointing(position_angle=30 * u.deg, sky_position=center)
     etc.add_target(
-        position=(0 * u.arcsec, 0 * u.arcsec),
+        ifu_offset=(0 * u.arcsec, 0 * u.arcsec),
         spatial=cubesim.Point(),
         spectrum=cubesim.GaussianLines(
             wavelength=1.1 * u.micron,

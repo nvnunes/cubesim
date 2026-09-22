@@ -44,6 +44,9 @@ class ResultOptions:
     atmosphere: str
     position_angle: u.Quantity
     pointing_center: Any | None
+    ifu_position: Any
+    ifu_center: Any | None
+    ifu_position_angle: u.Quantity
     targets: tuple[Any, ...]
     psf_pixel_scale: u.Quantity | None
     psf_path: Any | None
@@ -579,6 +582,10 @@ def readonly_options(options: ResultOptions) -> ResultOptions:
     _freeze_nested_data(targets)
     pointing_center = copy.deepcopy(options.pointing_center)
     _freeze_nested_data(pointing_center)
+    ifu_position = copy.deepcopy(options.ifu_position)
+    _freeze_nested_data(ifu_position)
+    ifu_center = copy.deepcopy(options.ifu_center)
+    _freeze_nested_data(ifu_center)
     exposure = ExposureOptions(
         time=_readonly_quantity(options.exposure.time),
         n=options.exposure.n,
@@ -602,6 +609,9 @@ def readonly_options(options: ResultOptions) -> ResultOptions:
         atmosphere=options.atmosphere,
         position_angle=_readonly_quantity(options.position_angle),
         pointing_center=pointing_center,
+        ifu_position=ifu_position,
+        ifu_center=ifu_center,
+        ifu_position_angle=_readonly_quantity(options.ifu_position_angle),
         targets=targets,
         psf_pixel_scale=(
             _readonly_quantity(options.psf_pixel_scale)
@@ -781,7 +791,7 @@ def _fits_metadata_from_options(options: ResultOptions) -> fits.Header:
     header["SCALE"] = options.scale
     header["DISPERSE"] = options.disperser
     header["ATMOS"] = options.atmosphere
-    header["POSANGLE"] = options.position_angle.to_value(u.deg)
+    header["POSANGLE"] = options.ifu_position_angle.to_value(u.deg)
     header["EXPTIME"] = exposure.time.to_value(u.s)
     header["NEXP"] = exposure.n
     header["NTARGET"] = exposure.n_target
@@ -821,7 +831,7 @@ def _cube_wcs_values(
     ny, nx, _ = shape
     wavelength = wavelength.to_value(u.micron)
     pixel_scale = options.spaxel_scale.to_value(u.deg)
-    angle = options.position_angle.to_value(u.rad)
+    angle = options.ifu_position_angle.to_value(u.rad)
     header = fits.Header()
     header["WCSAXES"] = 3
     header["CTYPE1"] = "WAVE"
@@ -831,7 +841,7 @@ def _cube_wcs_values(
     header["CD1_1"] = wavelength[1] - wavelength[0]
     header["CRPIX2"] = (nx + 1) / 2
     header["CRPIX3"] = (ny + 1) / 2
-    center = options.pointing_center
+    center = options.ifu_center
     if center is None:
         header["CTYPE2"] = "XOFFSET"
         header["CTYPE3"] = "YOFFSET"
