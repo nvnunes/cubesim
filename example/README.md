@@ -11,7 +11,8 @@ etc = cubesim.Etc("instrument_data")
 ```
 
 [`etc.ipynb`](etc.ipynb) demonstrates a complete calculation for an inclined
-emission-line galaxy and the result-based plotting interface.
+emission-line galaxy, PSF measurements (requiring `cubesim[stats]`), and the
+result-based plotting interface.
 [`sampling.ipynb`](sampling.ipynb) saves a sampled IFU cube, draws integrated
 Monte Carlo aperture measurements, and compares their empirical variance with
 the predicted detector variance.

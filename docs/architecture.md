@@ -46,6 +46,7 @@ Keep clear boundaries between:
 - PSF input ingestion and validation
 - background, throughput, QE, detector, signal, noise, and SNR models
 - ETC compute and result assembly
+- PSF measurement diagnostics
 - result visualization
 
 The current implementation keeps the public lifecycle in `cubesim/etc.py`,
@@ -56,7 +57,10 @@ target-model contracts in `cubesim/models.py`, numerical calculation in
 `cubesim/_instrument.py`, Hybrid orchestration in `cubesim/_hybrid.py`, direct
 PSF loading in `cubesim/_psf.py`, and public
 result visualization in `cubesim/plotting.py`. Plotting is a submodule API and
-is intentionally not re-exported from the package root.
+is intentionally not re-exported from the package root. PSF measurements live
+in the separate public `cubesim/diagnostics.py` submodule and delegate their
+numerical algorithms to the optional `ao-stats` dependency, loaded only when
+`psf_stats()` is called. Plotting without supplied statistics needs no AO Stats.
 
 ## Contract Ownership
 

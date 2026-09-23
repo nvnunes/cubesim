@@ -100,6 +100,9 @@ def test_example_notebook_runs_from_clean_copy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    if filename == "etc.ipynb":
+        pytest.importorskip("ao_stats")
+
     example = tmp_path / "example"
     shutil.copytree(
         EXAMPLE_DIRECTORY,

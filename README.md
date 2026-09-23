@@ -14,6 +14,7 @@ Its intended calculation scope is:
 - PSF input ingestion and application
 - background, throughput, detector, signal, noise, and SNR computation
 - result-based scientific validation plots
+- optional PSF Strehl, FWHM, and ensquared-energy diagnostics
 
 An instrument integration consists only of an `etc.ini` file and the data
 files it references. The repository includes a redistributable example
@@ -27,22 +28,29 @@ per pixel; NPY and in-memory inputs require an explicit angular pixel scale.
 
 ## Installation
 
-CubeSim is not published on PyPI. To install it from a local checkout:
+CubeSim is not published on PyPI. Install it from this checkout:
 
 ```bash
 python -m pip install .
 ```
 
-For instrument datasets with Hybrid AO PSF assets, install the optional
-dependency from a local sibling checkout if needed, then install CubeSim's
-Hybrid extra from this checkout:
+For PSF statistics, install AO Stats from a sibling checkout and enable the
+`stats` extra:
+
+```bash
+python -m pip install -e ../ao-stats
+python -m pip install '.[stats]'
+```
+
+For Hybrid PSF modelling, install Hybrid AO PSF from a sibling checkout and
+enable the `hybrid` extra:
 
 ```bash
 python -m pip install -e ../hybrid-ao-psf
 python -m pip install '.[hybrid]'
 ```
 
-That path is intended for package use. For local development in this repo, use
+These commands are for package use. For local development in this repo, use
 the canonical workflow in `Local Development Setup` below.
 
 The [`example/instrument_data`](example/instrument_data) directory is available
@@ -120,7 +128,8 @@ demonstrate and validate cubesim, not to predict GIRMOS or another real
 instrument.
 
 The source checkout also includes an [ETC calculation notebook](example/etc.ipynb)
-and a [sampling notebook](example/sampling.ipynb).
+(requires `cubesim[stats]` for its PSF measurements) and a
+[sampling notebook](example/sampling.ipynb).
 
 ## Documentation
 

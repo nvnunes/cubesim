@@ -17,6 +17,7 @@ from matplotlib.lines import Line2D
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from cubesim._result import ApertureResult, EtcResult, ModelGrid
+from cubesim.diagnostics import PsfStats
 
 __all__ = [
     "plot_aperture_signal_maps",
@@ -70,6 +71,7 @@ def plot_psf(
     result: EtcResult,
     *,
     title: str | None = None,
+    stats: PsfStats | None = None,
     radius: u.Quantity | None = None,
     cbar_range: _ColorbarRange | None = None,
 ) -> Figure:
@@ -81,6 +83,8 @@ def plot_psf(
         Completed CubeSim result containing a configured PSF.
     title
         Figure title. Defaults to ``"PSF"``.
+    stats
+        Optional PSF measurements to include in the title.
     radius
         Optional positive angular display radius. The stored PSF is not cropped.
     cbar_range
@@ -90,6 +94,8 @@ def plot_psf(
     result = _require_result(result)
     if not hasattr(result, "psf"):
         raise ValueError("plot_psf requires a result produced with a configured PSF.")
+    if stats is not None and not isinstance(stats, PsfStats):
+        raise TypeError("stats must be a PsfStats result from diagnostics.psf_stats().")
     radius_mas = None
     if radius is not None:
         if not isinstance(radius, u.Quantity) or not radius.isscalar:
@@ -138,9 +144,28 @@ def plot_psf(
     if radius_mas is not None:
         axis.set_xlim(-radius_mas, radius_mas)
         axis.set_ylim(-radius_mas, radius_mas)
-    _set_title(axis, title, "PSF")
+    heading = "PSF" if title is None else title
+    if stats is not None:
+        heading = _psf_stats_title(heading, stats)
+    axis.set_title(heading)
     figure.tight_layout()
     return figure
+
+
+def _psf_stats_title(title: str, stats: PsfStats) -> str:
+    parts = []
+    if stats.sr is not None:
+        parts.append(f"SR: {stats.sr.to_value(u.one):.2f}")
+    fwhm = stats.fwhm.to_value(u.mas)
+    parts.append(f"FWHM: {fwhm:.0f} mas" if np.isfinite(fwhm) else "FWHM: unavailable")
+    widths = np.atleast_1d(stats.ee_apertures.to_value(u.mas))
+    energies = np.atleast_1d(stats.ee.to_value(u.one))
+    if widths.shape != energies.shape:
+        raise ValueError("stats EE values must match their aperture widths.")
+    if widths.size == 0:
+        raise ValueError("stats must contain at least one EE aperture.")
+    ee_label = f"EE({widths[0]:g} mas): {energies[0]:.2f}"
+    return ", ".join((title, *parts, ee_label))
 
 
 def plot_target_models(

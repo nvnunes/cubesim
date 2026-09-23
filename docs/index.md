@@ -11,6 +11,7 @@ spectrographs. It provides:
 - reproducible sampled cubes and integrated aperture measurements
 - three-dimensional aperture measurements with spectrum and map diagnostics
 - result-based plotting for model, signal, S/N, PSF, and aperture validation
+- optional PSF Strehl, FWHM, and ensquared-energy diagnostics when metadata permits
 - FITS and pickle result persistence, plus FITS sample persistence
 
 CubeSim supplies the calculation framework and data formats. The repository
@@ -33,6 +34,7 @@ and [sampling notebook](https://github.com/nvnunes/cubesim/blob/develop/example/
   - [Target Models](reference/models.md)
   - [Results And Persistence](reference/results.md)
   - [Plotting](reference/plotting.md)
+  - [PSF Diagnostics](reference/diagnostics.md)
 - Contributor documentation:
   - [Testing and verification](testing.md)
   - [Development setup](development.md)

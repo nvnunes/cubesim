@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import sys
 
 import astropy.units as u
 import matplotlib
@@ -18,6 +19,7 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 
 import cubesim.plotting as plotting  # noqa: PLR0402
+from cubesim.diagnostics import PsfStats
 
 
 def test_plotting_range_parameters_are_consistent():
@@ -166,6 +168,46 @@ def test_psf_plot_accepts_explicit_title(result):
 
     assert figure.axes[0].get_title() == "Configured PSF"
     plt.close(figure)
+
+
+def test_psf_plot_does_not_require_ao_stats(result, monkeypatch):
+    monkeypatch.setitem(sys.modules, "ao_stats", None)
+
+    figure = plotting.plot_psf(result)
+
+    assert figure.axes[0].get_title() == "PSF"
+    plt.close(figure)
+
+
+def test_psf_plot_includes_optional_stats_in_title(result):
+    stats = PsfStats(
+        sr=None,
+        fwhm=78 * u.mas,
+        ee_apertures=np.array([50, 100]) * u.mas,
+        ee=np.array([0.4, 0.7]) * u.one,
+    )
+    figure = plotting.plot_psf(result, stats=stats, title="Measured PSF")
+
+    assert figure.axes[0].get_title() == (
+        "Measured PSF, FWHM: 78 mas, EE(50 mas): 0.40"
+    )
+    plt.close(figure)
+
+    hybrid_stats = PsfStats(
+        sr=0.35 * u.one,
+        fwhm=78 * u.mas,
+        ee_apertures=np.array([100]) * u.mas,
+        ee=np.array([0.7]) * u.one,
+    )
+    figure = plotting.plot_psf(result, stats=hybrid_stats)
+
+    assert figure.axes[0].get_title() == (
+        "PSF, SR: 0.35, FWHM: 78 mas, EE(100 mas): 0.70"
+    )
+    plt.close(figure)
+
+    with pytest.raises(TypeError, match="PsfStats"):
+        plotting.plot_psf(result, stats=object())
 
 
 def test_image_colorbars_match_plot_height(result):

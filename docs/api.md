@@ -184,8 +184,8 @@ clipped, and the centered PSF is normalized to unit total. Calling
 `set_psf()` again replaces the previous PSF.
 
 An instrument bundle with a `[hybrid]` section can instead model one Hybrid
-AO PSF for the current IFU position. Install the optional dependency from the
-CubeSim checkout using the [README installation steps](https://github.com/nvnunes/cubesim/blob/develop/README.md#installation),
+AO PSF for the current IFU position. This requires the optional `cubesim[hybrid]`
+extra; follow the [README installation steps](https://github.com/nvnunes/cubesim/blob/develop/README.md#installation),
 then configure NGS magnitudes and either telescope-frame offsets or absolute
 sky positions:
 
@@ -334,6 +334,35 @@ sample object.
 
 See [Results And Persistence](reference/results.md) for the complete immutable
 result layout, units, aperture products, and save formats.
+
+## Measure The PSF
+
+PSF measurements require the optional `cubesim[stats]` extra; follow the
+[README installation steps](https://github.com/nvnunes/cubesim/blob/develop/README.md#installation).
+They are separate from the ETC result. Pass the retained PSF to
+the diagnostics submodule with the full widths of the square apertures to
+measure:
+
+```python
+import cubesim.diagnostics as diagnostics
+import cubesim.plotting as plotting
+
+stats = diagnostics.psf_stats(
+    result.psf,
+    ee_apertures=[50, 100, 200] * u.mas,
+)
+figure = plotting.plot_psf(result, stats=stats)
+```
+
+`stats.ee` contains ensquared-energy fractions at `stats.ee_apertures`;
+`stats.fwhm` is the geometric-mean contour FWHM. When the PSF retains both a
+modelling wavelength and telescope pupil, `stats.sr` is the Strehl ratio.
+Otherwise it is `None`, while EE and FWHM are still measured from the image
+and pixel scale. The measurement does not change the result or ETC state.
+When supplied to `plot_psf()`, SR (when available), FWHM, and only the first
+EE measurement appear in the PSF plot title.
+See the [diagnostics reference](reference/diagnostics.md) for the return
+structure and validation contract.
 
 ## Plot Results
 

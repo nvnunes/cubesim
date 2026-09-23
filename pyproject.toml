@@ -25,6 +25,9 @@ Repository = "https://github.com/nvnunes/cubesim"
 Issues = "https://github.com/nvnunes/cubesim/issues"
 
 [project.optional-dependencies]
+stats = [
+    "ao-stats>=0.1.0",
+]
 hybrid = [
     "hybrid-ao-psf>=0.1.0",
 ]

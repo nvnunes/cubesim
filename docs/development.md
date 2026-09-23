@@ -14,11 +14,27 @@ For fresh clones, create or activate a Python 3.12+ environment at `./.conda`
 with your preferred environment manager. This repo does not prescribe one
 specific manager yet.
 
-After the environment is ready, install the package in editable mode with the
+After the environment is ready, install CubeSim in editable mode with the
 `dev` and `docs` extras:
 
 ```bash
 ./.conda/bin/python -m pip install -e ".[dev,docs]"
+```
+
+For PSF statistics, install AO Stats from a sibling checkout and enable the
+`stats` extra. The ETC example notebook and PSF diagnostics tests use it:
+
+```bash
+./.conda/bin/python -m pip install -e ../ao-stats
+./.conda/bin/python -m pip install -e ".[dev,docs,stats]"
+```
+
+For Hybrid PSF modelling, install Hybrid AO PSF from a sibling checkout and
+enable the `hybrid` extra:
+
+```bash
+./.conda/bin/python -m pip install -e ../hybrid-ao-psf
+./.conda/bin/python -m pip install -e ".[dev,docs,hybrid]"
 ```
 
 ## Daily Commands
