@@ -176,9 +176,10 @@ clipped, and the centered PSF is normalized to unit total. Calling
 `set_psf()` again replaces the previous PSF.
 
 An instrument bundle with a `[hybrid]` section can instead model one Hybrid
-AO PSF for the current IFU position. Install the optional dependency with
-`pip install 'cubesim[hybrid]'`, then configure NGS magnitudes and either
-telescope-frame offsets or absolute sky positions:
+AO PSF for the current IFU position. Install the optional dependency from the
+CubeSim checkout using the [README installation steps](https://github.com/nvnunes/cubesim/blob/develop/README.md#installation),
+then configure NGS magnitudes and either telescope-frame offsets or absolute
+sky positions:
 
 ```python
 etc.set_hybrid_psf(
@@ -446,8 +447,9 @@ are rejected unless `overwrite=True`.
 
 CubeSim validates each input at the narrowest useful boundary:
 
-- instrument syntax and referenced files are validated when `Etc` is
-  constructed;
+- instrument syntax and detector and atmosphere files are validated when
+  `Etc` is constructed; Hybrid asset files are validated during a Hybrid-backed
+  `run()`;
 - spatial, spectral, and velocity model values are validated when their model
   objects are constructed;
 - target unit compatibility is validated by `add_target()`;
@@ -467,8 +469,9 @@ result options own their target configuration. Reconfiguring or reusing the
 originating `Etc` cannot retroactively change an existing result.
 
 The current API implements forward exposure-time calculations with one
-wavelength-independent direct PSF. Inverse calculations and
-wavelength-dependent PSFs are outside the current public contract.
+wavelength-independent PSF per run, supplied directly or modelled by Hybrid.
+Inverse calculations and wavelength-dependent PSFs are outside the current
+public contract.
 
 See the [ETC reference](reference/etc.md) for method signatures and parameter
 details.

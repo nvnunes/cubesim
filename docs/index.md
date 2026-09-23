@@ -16,6 +16,11 @@ spectrographs. It provides:
 CubeSim supplies the calculation framework and data formats. The repository
 includes one redistributable example at `example/instrument_data`; real
 instrument definitions and scientific assets are distributed separately.
+The example is part of the source checkout, not the installed Python package.
+
+The source examples include the [instrument definition](https://github.com/nvnunes/cubesim/blob/develop/example/README.md),
+[ETC calculation notebook](https://github.com/nvnunes/cubesim/blob/develop/example/etc.ipynb),
+and [sampling notebook](https://github.com/nvnunes/cubesim/blob/develop/example/sampling.ipynb).
 
 ## Start Here
 

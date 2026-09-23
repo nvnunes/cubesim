@@ -1,7 +1,8 @@
 # Example Instrument
 
 This directory contains a small, redistributable IFU definition for learning
-and validating the public cubesim workflow. Construct the ETC with the
+and validating the public cubesim workflow. Run the notebooks with `example/`
+as the working directory. From there, construct the ETC with the
 `instrument_data` directory:
 
 ```python

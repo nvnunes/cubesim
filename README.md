@@ -27,20 +27,27 @@ per pixel; NPY and in-memory inputs require an explicit angular pixel scale.
 
 ## Installation
 
-To install the package from a local checkout:
+CubeSim is not published on PyPI. To install it from a local checkout:
 
 ```bash
 python -m pip install .
 ```
 
 For instrument datasets with Hybrid AO PSF assets, install the optional
-dependency with `python -m pip install '.[hybrid]'` from this checkout.
+dependency from a local sibling checkout if needed, then install CubeSim's
+Hybrid extra from this checkout:
+
+```bash
+python -m pip install -e ../hybrid-ao-psf
+python -m pip install '.[hybrid]'
+```
 
 That path is intended for package use. For local development in this repo, use
 the canonical workflow in `Local Development Setup` below.
 
-The bundled [`example/instrument_data`](example/instrument_data) directory can
-be used immediately. A real calculation requires a separately supplied
+The [`example/instrument_data`](example/instrument_data) directory is available
+in this source checkout, not installed with the Python package. Run the
+quickstart below from the repository root. Elsewhere, pass the path to an
 instrument-data directory containing `etc.ini` and its referenced files.
 
 ## Quickstart: Python API
@@ -111,6 +118,9 @@ example instrument and the provenance of its Gemini North Maunakea atmosphere
 tables. Its rounded instrument properties and synthetic PSF are intended to
 demonstrate and validate cubesim, not to predict GIRMOS or another real
 instrument.
+
+The source checkout also includes an [ETC calculation notebook](example/etc.ipynb)
+and a [sampling notebook](example/sampling.ipynb).
 
 ## Documentation
 

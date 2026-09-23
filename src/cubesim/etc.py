@@ -312,9 +312,14 @@ class Etc:
         Supply exactly one NGS coordinate form. Pointing offsets are ``(x, y)``
         angular pairs in telescope axes; sky positions are a one-dimensional
         ``SkyCoord`` and require an absolute telescope pointing. Magnitudes
-        must be a finite, matching one-dimensional quantity in ``mag``.
+        must be a real, finite, matching one-dimensional quantity in ``mag``.
+        The wavelength must be a finite, positive scalar length and lie within
+        the selected disperser's range at ``run()``. The zenith angle must be
+        a scalar angle in ``[0, 90)`` degrees.
         The instrument's ``[hybrid]`` section supplies the zeropoint and
         asset paths. The current IFU center is the single science position.
+        Calling ``set_psf()`` or ``set_hybrid_psf()`` later replaces the PSF
+        source; the last setter controls the next run.
         """
 
         if self._instrument.hybrid is None:
