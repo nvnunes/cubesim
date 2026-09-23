@@ -18,6 +18,7 @@ from cubesim._result import (
     EtcResult,
     ExposureOptions,
     HybridOptions,
+    PsfResult,
     ResultOptions,
     SkySubtractionOptions,
 )
@@ -645,8 +646,21 @@ class Etc:
             signals=output.signals,
             variances=output.variances,
             read_noise=self._instrument.detector.read_noise,
-            psf=psf.data if psf is not None else None,
-            psf_pixel_scale=psf.pixel_scale if psf is not None else None,
+            psf=(
+                PsfResult(
+                    data=psf.data,
+                    pixel_scale=psf.pixel_scale,
+                    wavelength=psf.wavelength,
+                    pupil=psf.pupil,
+                    telescope_diameter=(
+                        psf.telescope_diameter
+                        if psf.telescope_diameter is not None
+                        else self._instrument.telescope.primary_diameter
+                    ),
+                )
+                if psf is not None
+                else None
+            ),
         )
 
     def _resolve_ifu_position(

@@ -127,8 +127,9 @@ The current setup lifecycle is:
 - draw noisy realizations from the result with `sample()`
 
 `run()` always returns immutable S/N, wavelength, signal, and variance arrays
-plus a structured snapshot of resolved inputs. A configured PSF is also
-retained as normalized image data and an angular pixel scale. Detailed model
+plus a structured snapshot of resolved inputs. A configured PSF is retained
+with its normalized image, angular pixel scale, telescope diameter, and any
+available modelling wavelength and pupil. Detailed model
 products are opt-in through `include_models=True`. Results can draw
 Poisson-plus-Gaussian noisy cubes without mutating the deterministic result.
 Cube and aperture sampling return immutable objects that own their data, random

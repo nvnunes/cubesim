@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pickle
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -64,6 +65,7 @@ def _fake_engine(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     image[4, 9] = 2
     image[2, 6] = 1
     state.image = image
+    state.pupil = np.ones((7, 7)) * u.one
 
     class Request:
         def __init__(self, **kwargs):
@@ -76,7 +78,12 @@ def _fake_engine(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         assert ngs.name == "ngs.pkl"
         return SimpleNamespace(
             psfs=np.array([image]),
-            metadata=SimpleNamespace(pixel_scale=10 * u.mas),
+            metadata=SimpleNamespace(
+                pixel_scale=10 * u.mas,
+                wavelength=u.Quantity([request.wavelength.to_value(u.um)], u.um),
+                tel_pupil=state.pupil,
+                tel_diameter=7.9 * u.m,
+            ),
             ngs_flux=np.array([123.0]) * u.photon / u.s,
         )
 
@@ -131,7 +138,20 @@ def test_pending_hybrid_is_lazy_and_setter_order_wins(instrument_data, monkeypat
     assert first.options.hybrid.ngs_flux[0] == 123 * u.photon / u.s
     assert first.options.hybrid.ngs_magnitude_zeropoint == 1966817941 * u.photon / (u.m**2 * u.s)
     assert second.psf is not first.psf
-    assert np.array_equal(direct.psf, np.ones((5, 5)) / 25)
+    assert np.array_equal(direct.psf.data, np.ones((5, 5)) / 25)
+    assert direct.psf.wavelength is None
+    assert direct.psf.pupil is None
+    assert direct.psf.telescope_diameter == 8 * u.m
+    assert first.psf.wavelength == 1.1 * u.um
+    assert first.psf.wavelength.isscalar
+    assert first.psf.telescope_diameter == 7.9 * u.m
+    np.testing.assert_array_equal(first.psf.pupil.value, np.ones((7, 7)))
+    restored = pickle.loads(pickle.dumps(first))
+    assert restored.psf.wavelength == first.psf.wavelength
+    assert restored.psf.telescope_diameter == first.psf.telescope_diameter
+    np.testing.assert_array_equal(restored.psf.pupil.value, first.psf.pupil.value)
+    with pytest.raises(ValueError, match="read-only"):
+        restored.psf.pupil[0, 0] = 0 * u.one
 
 
 def test_hybrid_request_resolves_current_geometry_and_snapshots(instrument_data, monkeypatch) -> None:
@@ -158,11 +178,15 @@ def test_hybrid_request_resolves_current_geometry_and_snapshots(instrument_data,
     assert request.ngs_y[0] == 0 * u.arcsec
     assert result.options.hybrid.science_position[0].to_value(u.arcsec) == pytest.approx(2)
     assert result.options.hybrid.science_position[1].to_value(u.arcsec) == pytest.approx(3)
-    assert np.allclose(result.psf, load_psf(
+    assert np.allclose(result.psf.data, load_psf(
         rotate_to_ifu(state.image, 90 * u.deg),
         pixel_scale=10 * u.mas,
         instrument_root=instrument_data,
     ).data)
+    state.pupil[0, 0] = 0 * u.one
+    assert result.psf.pupil[0, 0] == 1 * u.one
+    with pytest.raises(ValueError, match="read-only"):
+        result.psf.pupil[0, 0] = 0 * u.one
     with pytest.raises(ValueError, match="read-only"):
         result.options.hybrid.ngs_magnitudes[0] = 9 * u.mag
 
@@ -219,7 +243,7 @@ def test_sky_coordinates_and_ifu_rotation_share_pointing_frame(
     assert state.requests[-1].science_x[0] == 2 * u.arcsec
     assert state.requests[-1].science_y[0] == 3 * u.arcsec
     np.testing.assert_allclose(
-        result.psf,
+        result.psf.data,
         load_psf(
             rotate_to_ifu(state.image, 37 * u.deg),
             pixel_scale=10 * u.mas,
@@ -367,7 +391,7 @@ def test_hybrid_wavelength_endpoints_and_direct_psf_equivalence(
     transformed = rotate_to_ifu(state.image, 37 * u.deg)
     etc.set_psf(transformed, pixel_scale=10 * u.mas)
     direct_result = etc.run()
-    np.testing.assert_allclose(direct_result.psf, hybrid_result.psf)
+    np.testing.assert_allclose(direct_result.psf.data, hybrid_result.psf.data)
     np.testing.assert_allclose(direct_result.snr, hybrid_result.snr)
     assert direct_result.options.hybrid is None
     assert hybrid_result.options.hybrid is not None
@@ -439,9 +463,12 @@ def test_real_hybrid_models_one_science_psf_and_resolves_photon_rates(instrument
             zeropoint=1966817941 * u.photon / (u.m**2 * u.s),
         ),
     )
-    assert result.psf.ndim == 2
-    assert result.psf.sum() == pytest.approx(1)
-    assert result.psf_pixel_scale == 10 * u.mas
+    assert result.psf.data.ndim == 2
+    assert result.psf.data.sum() == pytest.approx(1)
+    assert result.psf.pixel_scale == 10 * u.mas
+    assert result.psf.wavelength == 1.1 * u.um
+    assert result.psf.telescope_diameter == 7.9 * u.m
+    np.testing.assert_array_equal(result.psf.pupil.value, np.ones((17, 17)))
     np.testing.assert_allclose(
         result.options.hybrid.ngs_flux.to_value(u.photon / u.s),
         expected_flux.to_value(u.photon / u.s),

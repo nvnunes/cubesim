@@ -150,7 +150,7 @@ def test_public_plotting_functions_return_figures_without_showing(result, monkey
 def test_psf_plot_uses_result_snapshot_and_angular_radius(result):
     figure = plotting.plot_psf(result, radius=15 * u.mas)
     axis = figure.axes[0]
-    expected = np.log10(np.clip(result.psf / result.psf.max(), 1e-10, None))
+    expected = np.log10(np.clip(result.psf.data / result.psf.data.max(), 1e-10, None))
 
     assert np.allclose(axis.images[0].get_array(), expected)
     assert axis.images[0].get_extent() == [-25.0, 25.0, -25.0, 25.0]
@@ -925,7 +925,7 @@ def test_plotting_reports_missing_models_and_psf(instrument_data):
 
 
 def test_plotting_does_not_mutate_result(result):
-    psf = result.psf.copy()
+    psf = result.psf.data.copy()
     snr = result.snr.copy()
     target = result.signals.target.copy()
     aperture = result.apertures[0].spectra.signals.target.copy()
@@ -936,7 +936,7 @@ def test_plotting_does_not_mutate_result(result):
         plotting.plot_aperture_signal_maps(result),
     )
 
-    assert np.array_equal(result.psf, psf)
+    assert np.array_equal(result.psf.data, psf)
     assert np.array_equal(result.snr, snr)
     assert np.array_equal(result.signals.target.value, target.value)
     assert np.array_equal(

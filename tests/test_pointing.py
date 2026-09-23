@@ -361,8 +361,8 @@ def test_direct_psf_stays_in_ifu_detector_axes(instrument_data) -> None:
         etc.set_psf(psf, pixel_scale=10 * u.mas)
         _add_point(etc, ifu_offset=(0 * u.mas, 0 * u.mas))
         results.append(etc.run())
-    np.testing.assert_array_equal(results[0].psf, results[1].psf)
-    assert results[0].psf[3, 1] > 0
+    np.testing.assert_array_equal(results[0].psf.data, results[1].psf.data)
+    assert results[0].psf.data[3, 1] > 0
 
 
 def test_position_forms_are_exclusive_and_absolute_requires_pointing(instrument_data) -> None:

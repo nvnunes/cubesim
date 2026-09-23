@@ -35,8 +35,13 @@ def test_pickle_round_trips_complete_result(instrument_data, tmp_path) -> None:
     assert restored.options.scale == result.options.scale
     assert restored.options.exposure == result.options.exposure
     assert restored.apertures[0].name == "line"
-    assert np.array_equal(restored.psf, result.psf)
-    assert restored.psf_pixel_scale == result.psf_pixel_scale
+    assert np.array_equal(restored.psf.data, result.psf.data)
+    assert restored.psf.pixel_scale == result.psf.pixel_scale
+    assert restored.psf.wavelength is None
+    assert restored.psf.pupil is None
+    assert restored.psf.telescope_diameter == result.psf.telescope_diameter
+    with pytest.raises(ValueError, match="read-only"):
+        restored.psf.data[0, 0] = 0
     assert np.array_equal(
         restored.apertures[0].spectra.snr,
         result.apertures[0].spectra.snr,

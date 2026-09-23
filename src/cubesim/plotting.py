@@ -102,11 +102,11 @@ def plot_psf(
             raise ValueError("radius must be finite and positive.")
 
     figure, axis = plt.subplots(figsize=(6, 6))
-    psf = np.asarray(result.psf)
+    psf = result.psf.data
     peak = psf.max()
     with np.errstate(divide="ignore"):
         relative = np.log10(np.clip(psf / peak, 1e-10, None))
-    extent = _angular_extent(psf.shape, result.psf_pixel_scale)
+    extent = _angular_extent(psf.shape, result.psf.pixel_scale)
     norm = _colorbar_norm(cbar_range)
     if norm is None:
         norm = Normalize(vmin=max(-10.0, float(relative.min())), vmax=0.0)
@@ -799,8 +799,8 @@ def _draw_target_spatial(
 ) -> None:
     if high_res:
         pixel_scale = (
-            result.psf_pixel_scale
-            if hasattr(result, "psf_pixel_scale")
+            result.psf.pixel_scale
+            if hasattr(result, "psf")
             else result.options.spaxel_scale
         )
         image = axis.imshow(
@@ -874,8 +874,8 @@ def _draw_target_velocity(
     velocity = model.velocity.to(u.km / u.s)
     if high_res:
         pixel_scale = (
-            result.psf_pixel_scale
-            if hasattr(result, "psf_pixel_scale")
+            result.psf.pixel_scale
+            if hasattr(result, "psf")
             else result.options.spaxel_scale
         )
         extent = _angular_extent(velocity.shape, pixel_scale)

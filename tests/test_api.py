@@ -91,9 +91,12 @@ def test_run_returns_requested_groups_and_immutable_snapshot(instrument_data) ->
     assert np.array_equal(aperture_sample.mask, result.apertures[0].mask)
     assert single_aperture_sample.data.isscalar
     assert result.apertures[0].mask.sum() == 3
-    assert result.psf.shape == (5, 5)
-    assert result.psf.sum() == pytest.approx(1.0)
-    assert result.psf_pixel_scale == 10 * u.mas
+    assert result.psf.data.shape == (5, 5)
+    assert result.psf.data.sum() == pytest.approx(1.0)
+    assert result.psf.pixel_scale == 10 * u.mas
+    assert result.psf.wavelength is None
+    assert result.psf.pupil is None
+    assert result.psf.telescope_diameter == 8 * u.m
 
     aperture = result.apertures[0]
     assert aperture.spectra.snr.shape == result.wavelength.shape
@@ -130,7 +133,11 @@ def test_run_returns_requested_groups_and_immutable_snapshot(instrument_data) ->
     with pytest.raises(ValueError, match="read-only"):
         result.options.targets[0].spectrum.wavelength[0] = 1.2 * u.micron
     with pytest.raises(ValueError, match="read-only"):
-        result.psf[0, 0] = 0
+        result.psf.data[0, 0] = 0
+    with pytest.raises(ValueError, match="read-only"):
+        result.psf.pixel_scale[...] = 20 * u.mas
+    with pytest.raises(AttributeError):
+        result.psf.data = np.ones((5, 5))
     with pytest.raises(ValueError, match="read-only"):
         result.apertures[0].spectra.snr[0] = 0
     with pytest.raises(ValueError, match="read-only"):
@@ -231,7 +238,6 @@ def test_uniform_target_result_has_no_psf_snapshot(instrument_data) -> None:
     result = etc.run()
 
     assert not hasattr(result, "psf")
-    assert not hasattr(result, "psf_pixel_scale")
 
 
 def test_sampling_validates_request(instrument_data) -> None:

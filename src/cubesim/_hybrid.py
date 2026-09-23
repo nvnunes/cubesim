@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import astropy.units as u
@@ -70,8 +71,17 @@ def model_psf(
     scale = result.metadata.pixel_scale
     if not scale.isscalar:
         scale = scale[0]
+    wavelength = result.metadata.wavelength
+    if not wavelength.isscalar:
+        wavelength = wavelength[0]
     image = rotate_to_ifu(result.psfs[0], ifu_rotation)
     psf = load_psf(image, pixel_scale=scale, instrument_root=root)
+    psf = replace(
+        psf,
+        wavelength=wavelength,
+        pupil=result.metadata.tel_pupil,
+        telescope_diameter=result.metadata.tel_diameter,
+    )
     options = HybridOptions(
         coordinate_form=coordinate_form,
         ngs_pointing_offsets=ngs_offsets,

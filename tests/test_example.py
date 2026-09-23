@@ -67,8 +67,8 @@ def test_example_psf_and_calculation_use_public_api() -> None:
     assert result.snr.shape[:2] == (40, 40)
     assert result.snr.shape[2:] == result.wavelength.shape
     assert np.isfinite(result.snr).all()
-    assert result.psf_pixel_scale == 10 * u.mas
-    assert result.psf.sum() == 1
+    assert result.psf.pixel_scale == 10 * u.mas
+    assert result.psf.data.sum() == 1
 
 
 def test_readme_quickstart_runs(monkeypatch: pytest.MonkeyPatch) -> None:

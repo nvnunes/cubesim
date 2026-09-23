@@ -21,12 +21,18 @@ When a PSF is configured, the result also contains:
 
 | Attribute | Meaning | Shape |
 | --- | --- | --- |
-| `psf` | Centered, unit-normalized PSF used by the calculation | `(y_psf, x_psf)` |
-| `psf_pixel_scale` | Positive angular PSF pixel scale | scalar quantity |
+| `psf` | Applied PSF image and physical metadata | structured object |
 
-These attributes record resolved calculation input and do not depend on
-`include_models`. A calculation containing only uniform targets may omit a
-PSF; in that case, neither attribute is present. If a PSF is configured for a
+`result.psf.data` is the centered, unit-normalized 2D image in `[y, x]`
+order. `result.psf.pixel_scale` is its positive angular pixel scale, and
+`result.psf.telescope_diameter` is the telescope diameter used by the PSF
+model or instrument. `result.psf.wavelength` and `result.psf.pupil` are
+populated for Hybrid-modelled PSFs; direct PSFs leave them as `None`. The pupil
+is a dimensionless 2D quantity. The image and metadata are owned, read-only
+snapshots; they do not depend on `include_models`.
+
+A calculation containing only uniform targets may omit a PSF; in that case,
+`result.psf` is absent. If a PSF is configured for a
 uniform-only calculation, it is retained in the result even though spatial
 convolution is unnecessary and is not applied.
 

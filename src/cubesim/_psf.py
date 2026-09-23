@@ -19,6 +19,9 @@ class Psf:
     data: np.ndarray
     pixel_scale: u.Quantity
     path: Path | None
+    wavelength: u.Quantity | None = None
+    pupil: u.Quantity | None = None
+    telescope_diameter: u.Quantity | None = None
 
 
 def load_psf(

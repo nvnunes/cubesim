@@ -87,6 +87,25 @@ class ResultOptions:
 
 
 @dataclass(frozen=True, slots=True)
+class PsfResult:
+    """PSF retained with one calculation and its physical metadata.
+
+    Attributes:
+        data: Centered, unit-normalized two-dimensional PSF in ``[y, x]`` order.
+        pixel_scale: Angular scale of one PSF pixel.
+        wavelength: Modelling wavelength, when known.
+        pupil: Dimensionless telescope pupil, when supplied by the PSF model.
+        telescope_diameter: Telescope diameter used by the PSF model or instrument.
+    """
+
+    data: np.ndarray
+    pixel_scale: u.Quantity
+    wavelength: u.Quantity | None
+    pupil: u.Quantity | None
+    telescope_diameter: u.Quantity
+
+
+@dataclass(frozen=True, slots=True)
 class ModelGrid:
     wavelength: u.Quantity
     spatial: np.ndarray
@@ -400,8 +419,7 @@ class EtcResult:
         variances: Variances,
         read_noise: u.Quantity,
         models: Models | None = None,
-        psf: np.ndarray | None = None,
-        psf_pixel_scale: u.Quantity | None = None,
+        psf: PsfResult | None = None,
     ) -> None:
         object.__setattr__(self, "_locked", False)
         self.snr = _readonly_array(snr)
@@ -413,11 +431,8 @@ class EtcResult:
         self._read_noise = _readonly_quantity(read_noise)
         if models is not None:
             self.models = readonly_models(models)
-        if (psf is None) != (psf_pixel_scale is None):
-            raise ValueError("PSF data and pixel scale must be provided together.")
         if psf is not None:
-            self.psf = _readonly_array(psf)
-            self.psf_pixel_scale = _readonly_quantity(psf_pixel_scale)
+            self.psf = readonly_psf(psf)
         object.__setattr__(self, "_locked", True)
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -462,12 +477,7 @@ class EtcResult:
         if "models" in state:
             object.__setattr__(self, "models", readonly_models(state.pop("models")))
         if "psf" in state:
-            object.__setattr__(self, "psf", _readonly_array(state.pop("psf")))
-            object.__setattr__(
-                self,
-                "psf_pixel_scale",
-                _readonly_quantity(state.pop("psf_pixel_scale")),
-            )
+            object.__setattr__(self, "psf", readonly_psf(state.pop("psf")))
         object.__setattr__(self, "_locked", True)
 
     def sample(
@@ -606,6 +616,18 @@ def readonly_aperture_projection(
         snr=projection.snr,
         signals=projection.signals,
         variances=projection.variances,
+    )
+
+
+def readonly_psf(psf: PsfResult) -> PsfResult:
+    return PsfResult(
+        data=_readonly_array(psf.data),
+        pixel_scale=_readonly_quantity(psf.pixel_scale),
+        wavelength=(
+            _readonly_quantity(psf.wavelength) if psf.wavelength is not None else None
+        ),
+        pupil=_readonly_quantity(psf.pupil) if psf.pupil is not None else None,
+        telescope_diameter=_readonly_quantity(psf.telescope_diameter),
     )
 
 
