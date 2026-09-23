@@ -84,6 +84,14 @@ angle. Within either local `(x, y)` frame, ordinary Cartesian polar conversion
 still applies: `x = r cos(alpha)` and `y = r sin(alpha)`, with `alpha` measured
 from `+x` toward `+y`. This `alpha` is not a sky position angle.
 
+`pointing_offset` in `set_ifu_position()` and `add_target()`, and each
+`ngs_pointing_offsets` entry in `set_hybrid_psf()`, also accept polar
+`(r, theta)` pairs. The exact units `(arcsec, deg)` select polar input;
+other angular unit pairings remain Cartesian `(x, y)`. Polar `r` must be
+nonnegative, and `theta` is measured from telescope-frame `+x` toward `+y`,
+not east of north. CubeSim resolves polar input to Cartesian pointing offsets
+before the calculation and retains those resolved offsets in the result.
+
 Image arrays use NumPy index order `[row_y, column_x]`: the first axis is `y`
 and the second is `x`. Increasing row follows detector `+y`; increasing column
 follows detector `+x`. Result cubes have shape `(y, x, wavelength)`. Pixel-index
@@ -183,7 +191,7 @@ sky positions:
 
 ```python
 etc.set_hybrid_psf(
-    ngs_pointing_offsets=((10 * u.arcsec, 0 * u.arcsec),),
+    ngs_pointing_offsets=((10 * u.arcsec, 0 * u.deg),),
     ngs_magnitudes=u.Quantity([12.0], u.mag),
     wavelength=1.1 * u.micron,
     zenith_angle=20 * u.deg,

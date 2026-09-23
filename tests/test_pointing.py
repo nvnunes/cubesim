@@ -57,6 +57,44 @@ def test_positive_ifu_axes_follow_columns_and_rows(instrument_data) -> None:
     assert pointing_y == pytest.approx(along_y)
 
 
+def test_polar_pointing_offsets_match_cartesian_with_rotated_pointing(instrument_data) -> None:
+    etc = _etc(instrument_data)
+    etc.set_pointing(position_angle=35 * u.deg)
+    etc.set_ifu_position(pointing_offset=(0.05 * u.arcsec, 30 * u.deg))
+    _add_point(etc, pointing_offset=(0.07 * u.arcsec, 120 * u.deg))
+    _add_point(
+        etc,
+        pointing_offset=(-0.035 * u.arcsec, 0.0606217782649107 * u.arcsec),
+    )
+    result = etc.run(include_models=True)
+
+    assert result.options.ifu_position.pointing_offset[0].to_value(u.arcsec) == pytest.approx(
+        0.04330127018922193
+    )
+    assert result.options.ifu_position.pointing_offset[1].to_value(u.arcsec) == pytest.approx(
+        0.025
+    )
+    np.testing.assert_allclose(
+        result.models.targets[0].high.spatial,
+        result.models.targets[1].high.spatial,
+        atol=1e-12,
+    )
+
+
+def test_pointing_offset_unit_pair_selects_polar_form(instrument_data) -> None:
+    etc = _etc(instrument_data)
+    etc.set_ifu_position(pointing_offset=(0.1 * u.arcsec, 0.2 * u.arcsec))
+    _add_point(etc, ifu_offset=(0 * u.arcsec, 0 * u.arcsec))
+    result = etc.run()
+    assert result.options.ifu_position.pointing_offset[0] == 0.1 * u.arcsec
+    assert result.options.ifu_position.pointing_offset[1] == 0.2 * u.arcsec
+
+    with pytest.raises(ValueError, match="r must be nonnegative"):
+        etc.set_ifu_position(pointing_offset=(-1 * u.arcsec, 30 * u.deg))
+    with pytest.raises(ValueError, match="theta must be finite"):
+        etc.set_ifu_position(pointing_offset=(1 * u.arcsec, np.nan * u.deg))
+
+
 def test_relative_ifu_rotation_maps_pointing_axes(instrument_data) -> None:
     etc = _etc(instrument_data)
     etc.set_pointing(position_angle=30 * u.deg)

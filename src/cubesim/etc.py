@@ -179,8 +179,10 @@ class Etc:
         """Place and rotate the IFU within the telescope pointing frame.
 
         Exactly one of ``pointing_offset`` and ``sky_position`` is required.
-        The offset is ``(x, y)`` in telescope axes; rotation is relative to
-        those axes. The default IFU placement is the pointing center.
+        The offset is ``(x, y)`` in telescope axes or ``(r, theta)`` when its
+        units are ``(arcsec, deg)``. Polar ``theta`` runs from ``+x`` toward
+        ``+y``. Rotation is relative to telescope axes. The default IFU
+        placement is the pointing center.
         """
 
         if (pointing_offset is None) == (sky_position is None):
@@ -188,7 +190,7 @@ class Etc:
                 "Provide exactly one of pointing_offset and sky_position."
             )
         offset = (
-            _xy_offset(pointing_offset, "pointing_offset")
+            _pointing_offset(pointing_offset, "pointing_offset")
             if pointing_offset is not None
             else None
         )
@@ -211,7 +213,9 @@ class Etc:
 
         Args:
             ifu_offset: ``(x, y)`` offset in IFU detector axes.
-            pointing_offset: ``(x, y)`` offset in telescope field axes.
+            pointing_offset: ``(x, y)`` in telescope axes, or ``(r, theta)``
+                when the units are ``(arcsec, deg)``. Polar ``theta`` runs from
+                ``+x`` toward ``+y``.
             sky_position: Absolute scalar sky coordinate in any frame
                 convertible to ICRS. Exactly one target position form is
                 required.
@@ -241,7 +245,7 @@ class Etc:
             _xy_offset(ifu_offset, "ifu_offset") if ifu_offset is not None else None
         )
         pointing_offset = (
-            _xy_offset(pointing_offset, "pointing_offset")
+            _pointing_offset(pointing_offset, "pointing_offset")
             if pointing_offset is not None
             else None
         )
@@ -310,7 +314,9 @@ class Etc:
         """Configure one Hybrid AO PSF to be modelled by the next ``run()``.
 
         Supply exactly one NGS coordinate form. Pointing offsets are ``(x, y)``
-        angular pairs in telescope axes; sky positions are a one-dimensional
+        angular pairs in telescope axes, or ``(r, theta)`` when their units
+        are ``(arcsec, deg)``. Polar ``theta`` runs from ``+x`` toward ``+y``.
+        Sky positions are a one-dimensional
         ``SkyCoord`` and require an absolute telescope pointing. Magnitudes
         must be a real, finite, matching one-dimensional quantity in ``mag``.
         The wavelength must be a finite, positive scalar length and lie within
@@ -333,10 +339,10 @@ class Etc:
         if ngs_pointing_offsets is not None:
             if not isinstance(ngs_pointing_offsets, (tuple, list)) or not ngs_pointing_offsets:
                 raise ValueError(
-                    "ngs_pointing_offsets must contain at least one (x, y) pair."
+                    "ngs_pointing_offsets must contain at least one (x, y) or (r, theta) pair."
                 )
             offsets = tuple(
-                _xy_offset(point, f"ngs_pointing_offsets[{index}]")
+                _pointing_offset(point, f"ngs_pointing_offsets[{index}]")
                 for index, point in enumerate(ngs_pointing_offsets)
             )
         else:
@@ -768,6 +774,26 @@ def _xy_offset(value: Any, name: str) -> tuple[u.Quantity, u.Quantity]:
     if not isinstance(value, tuple) or len(value) != 2:
         raise TypeError(f"{name} must be an (x, y) angular tuple.")
     return _angle(value[0], f"{name} x"), _angle(value[1], f"{name} y")
+
+
+def _pointing_offset(value: Any, name: str) -> tuple[u.Quantity, u.Quantity]:
+    if not isinstance(value, tuple) or len(value) != 2:
+        raise TypeError(f"{name} must be an (x, y) or (r, theta) angular tuple.")
+    radius, theta = value
+    # Both coordinate forms are angular; exact units identify polar input.
+    if (
+        isinstance(radius, u.Quantity)
+        and isinstance(theta, u.Quantity)
+        and radius.unit == u.arcsec
+        and theta.unit == u.deg
+    ):
+        radius = _angle(radius, f"{name} r")
+        theta = _angle(theta, f"{name} theta")
+        if radius.value < 0:
+            raise ValueError(f"{name} r must be nonnegative.")
+        angle = theta.to_value(u.rad)
+        return radius * np.cos(angle), radius * np.sin(angle)
+    return _xy_offset(value, name)
 
 
 def _sky_position(value: Any, name: str) -> SkyCoord | None:

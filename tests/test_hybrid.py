@@ -167,6 +167,33 @@ def test_hybrid_request_resolves_current_geometry_and_snapshots(instrument_data,
         result.options.hybrid.ngs_magnitudes[0] = 9 * u.mag
 
 
+def test_hybrid_polar_ngs_offsets_resolve_in_pointing_axes(instrument_data, monkeypatch) -> None:
+    _bundle(instrument_data)
+    state = _fake_engine(monkeypatch)
+    etc = _etc(instrument_data)
+    etc.set_pointing(position_angle=40 * u.deg)
+    etc.set_hybrid_psf(
+        ngs_pointing_offsets=(
+            (30 * u.arcsec, 0 * u.deg),
+            (30 * u.arcsec, 120 * u.deg),
+            (30 * u.arcsec, 240 * u.deg),
+        ),
+        ngs_magnitudes=np.array([17, 17, 17]) * u.mag,
+        wavelength=1.1 * u.um,
+        zenith_angle=20 * u.deg,
+    )
+    result = etc.run()
+    request = state.requests[0]
+    np.testing.assert_allclose(request.ngs_x.to_value(u.arcsec), [30, -15, -15], atol=1e-12)
+    np.testing.assert_allclose(
+        request.ngs_y.to_value(u.arcsec),
+        [0, 15 * np.sqrt(3), -15 * np.sqrt(3)],
+        atol=1e-12,
+    )
+    assert result.options.hybrid.coordinate_form == "pointing_offsets"
+    assert result.options.hybrid.ngs_pointing_offsets[1][0].to_value(u.arcsec) == pytest.approx(-15)
+
+
 def test_sky_coordinates_and_ifu_rotation_share_pointing_frame(
     instrument_data, monkeypatch
 ) -> None:
