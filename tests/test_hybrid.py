@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import astropy.units as u
+import matplotlib as mpl
 import numpy as np
 import pytest
 from astropy.coordinates import SkyCoord
@@ -152,6 +153,33 @@ def test_pending_hybrid_is_lazy_and_setter_order_wins(instrument_data, monkeypat
     np.testing.assert_array_equal(restored.psf.pupil.value, first.psf.pupil.value)
     with pytest.raises(ValueError, match="read-only"):
         restored.psf.pupil[0, 0] = 0 * u.one
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_hybrid_model_restores_matplotlib_settings(instrument_data, monkeypatch, raises) -> None:
+    _bundle(instrument_data)
+    _fake_engine(monkeypatch)
+    etc = _etc(instrument_data)
+    _set_hybrid(etc)
+    engine = sys.modules["hybrid_ao_psf"]
+    original_simulate = engine.simulate
+    original_font_size = mpl.rcParams["font.size"]
+    monkeypatch.setitem(mpl.rcParams, "font.size", original_font_size)
+
+    def simulate_with_style_change(*args):
+        mpl.rcParams["font.size"] = original_font_size + 6
+        if raises:
+            raise RuntimeError("Hybrid model failed")
+        return original_simulate(*args)
+
+    monkeypatch.setattr(engine, "simulate", simulate_with_style_change)
+    if raises:
+        with pytest.raises(RuntimeError, match="Hybrid model failed"):
+            etc.run()
+    else:
+        etc.run()
+
+    assert mpl.rcParams["font.size"] == original_font_size
 
 
 def test_hybrid_request_resolves_current_geometry_and_snapshots(instrument_data, monkeypatch) -> None:
