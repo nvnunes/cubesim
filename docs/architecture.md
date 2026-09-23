@@ -53,7 +53,8 @@ target-model contracts in `cubesim/models.py`, numerical calculation in
 `cubesim/_calculation.py`, immutable result structures in
 `cubesim/_result.py`, shared in-field variance propagation in
 `cubesim/_variance.py`, instrument-definition and ECSV loading in
-`cubesim/_instrument.py`, direct PSF loading in `cubesim/_psf.py`, and public
+`cubesim/_instrument.py`, Hybrid orchestration in `cubesim/_hybrid.py`, direct
+PSF loading in `cubesim/_psf.py`, and public
 result visualization in `cubesim/plotting.py`. Plotting is a submodule API and
 is intentionally not re-exported from the package root.
 
@@ -76,8 +77,8 @@ integration.
 An instrument-data directory is explicit caller input and must contain
 `etc.ini` at its root. Relative input paths resolve from the current working
 directory, then from the nearest `pyproject.toml` project root when the current
-path does not exist. INI file references are relative, must remain within the
-instrument-data directory after symlink resolution, and receive no further
+path does not exist. INI file references are relative to the instrument-data
+directory; symbolic links are followed normally. References receive no further
 package-data, current-directory, environment-variable, registry, or network
 fallback. Detector QE, atmospheric transmission, and atmospheric background
 files use the canonical two-column ECSV schemas and units defined in
@@ -97,6 +98,13 @@ inputs take their pixel scale only from `PIXSCALE` and reject an explicit
 NPY loading uses `allow_pickle=False`. PSFs are copied, validated as finite,
 non-negative, nonempty 2D numeric arrays with positive total flux, centred
 using the established PSF centering operation, and normalized to unit sum.
+An optional instrument `[hybrid]` section supplies a magnitude zeropoint and
+three instrument-data-relative assets. `cubesim[hybrid]` is imported only for
+an active Hybrid-backed `run()`. Hybrid owns magnitude-to-photon conversion,
+MASTSEL interpretation, interpolator loading, and AO PSF computation. CubeSim
+resolves current pointing geometry, requests one science PSF, rotates its
+`[y, x]` image through the relative IFU angle, and passes it through the
+existing PSF validation path. Direct PSFs are already detector-oriented.
 
 ## Compute Lifecycle
 
@@ -110,7 +118,8 @@ The current setup lifecycle is:
 - optionally set an absolute telescope pointing and place or rotate the IFU
   within its field of regard
 - add one or more composed spatial and spectral targets with `add_target()`
-- configure a direct PSF with `set_psf()`
+- configure a direct PSF with `set_psf()` or a pending Hybrid PSF with
+  `set_hybrid_psf()`; the last setter wins
 - configure target and sky integrations with `set_exposure()` and optional
   `set_sky_subtraction()`
 - optionally register apertures with `add_aperture()`
@@ -132,7 +141,7 @@ FITS datacubes and metadata.
 The current implementation covers point, Gaussian, Sersic, supplied
 image, and uniform spatial profiles; Gaussian lines in air or vacuum and
 tabulated spectra; constant, rotating-disk, and supplied velocity fields;
-achromatic direct PSFs; nodding and in-field sky subtraction; and rectangular
+achromatic direct or Hybrid-modelled PSFs; nodding and in-field sky subtraction; and rectangular
 or custom apertures. Spatially varying velocity is applied on the
 high-resolution model before PSF and line-spread-function convolution.
 

@@ -4,7 +4,7 @@
 spectrographs.
 
 The current implementation loads and validates an instrument-data directory,
-configures targets, exposure accounting, and a direct PSF, then calculates
+configures targets, exposure accounting, and a direct or optional Hybrid AO PSF, then calculates
 signal-to-noise datacubes for an integral-field spectrograph.
 
 Its intended calculation scope is:
@@ -20,7 +20,8 @@ files it references. The repository includes a redistributable example
 instrument; real instrument datasets are distributed separately from the
 Python package.
 
-`cubesim` does not own PSF simulation. Direct PSFs may be supplied as FITS,
+`cubesim` delegates optional AO PSF modelling to `hybrid-ao-psf`; it does not
+implement that simulation. Direct PSFs may be supplied as FITS,
 NPY, or in-memory two-dimensional arrays. FITS files carry `PIXSCALE` in mas
 per pixel; NPY and in-memory inputs require an explicit angular pixel scale.
 
@@ -31,6 +32,9 @@ To install the package from a local checkout:
 ```bash
 python -m pip install .
 ```
+
+For instrument datasets with Hybrid AO PSF assets, install the optional
+dependency with `python -m pip install '.[hybrid]'` from this checkout.
 
 That path is intended for package use. For local development in this repo, use
 the canonical workflow in `Local Development Setup` below.
@@ -95,7 +99,7 @@ figure = plotting.plot_snr(result, wavelength=1.1 * u.micron)
 The current implementation covers analytic and supplied spatial
 profiles, Gaussian-line and tabulated spectra, constant velocity, rotating
 disks, supplied velocity fields, nodding and in-field sky subtraction, and
-achromatic direct PSFs. Spatially varying velocities are applied on the
+achromatic direct or Hybrid-modelled PSFs. Spatially varying velocities are applied on the
 high-resolution model before PSF and line-spread-function convolution.
 
 Python API guide: [`docs/api.md`](docs/api.md)

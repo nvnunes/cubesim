@@ -100,19 +100,35 @@ def test_constructor_rejects_unknown_ini_key(instrument_data) -> None:
         cubesim.Etc(instrument_data)
 
 
-def test_constructor_rejects_reference_outside_bundle(instrument_data, tmp_path) -> None:
-    outside = tmp_path.parent / "outside.ecsv"
-    outside.write_text("not used", encoding="utf-8")
+def test_constructor_follows_relative_symlink_outside_data_directory(
+    instrument_data, tmp_path
+) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-qe.ecsv"
+    shutil.copy2(instrument_data / "qe.ecsv", outside)
+    (instrument_data / "qe-link.ecsv").symlink_to(Path("..") / outside.name)
     config = instrument_data / "etc.ini"
     config.write_text(
         config.read_text(encoding="utf-8").replace(
             "quantum_efficiency_file = qe.ecsv",
-            "quantum_efficiency_file = ../outside.ecsv",
+            "quantum_efficiency_file = qe-link.ecsv",
         ),
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="escapes the instrument bundle"):
+    cubesim.Etc(instrument_data)
+
+
+def test_constructor_rejects_absolute_ini_reference(instrument_data) -> None:
+    config = instrument_data / "etc.ini"
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            "quantum_efficiency_file = qe.ecsv",
+            f"quantum_efficiency_file = {instrument_data / 'qe.ecsv'}",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="INI file references must be relative"):
         cubesim.Etc(instrument_data)
 
 

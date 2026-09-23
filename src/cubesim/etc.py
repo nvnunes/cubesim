@@ -11,11 +11,13 @@ import numpy as np
 from astropy.coordinates import SkyCoord
 
 from cubesim._calculation import calculate
+from cubesim._hybrid import model_psf
 from cubesim._instrument import InstrumentSelection, load_instrument
 from cubesim._psf import Psf, load_psf
 from cubesim._result import (
     EtcResult,
     ExposureOptions,
+    HybridOptions,
     ResultOptions,
     SkySubtractionOptions,
 )
@@ -59,6 +61,16 @@ class _IfuPosition:
 
 
 @dataclass(frozen=True, slots=True)
+class _HybridRequest:
+    coordinate_form: str
+    ngs_pointing_offsets: tuple[tuple[u.Quantity, u.Quantity], ...] | None
+    ngs_sky_positions: SkyCoord | None
+    ngs_magnitudes: u.Quantity
+    wavelength: u.Quantity
+    zenith_angle: u.Quantity
+
+
+@dataclass(frozen=True, slots=True)
 class _ExposureRequest:
     time: u.Quantity
     n: int | None
@@ -99,6 +111,7 @@ class Etc:
         self._instrument = load_instrument(instrument_data)
         self._selection: InstrumentSelection | None = None
         self._psf: Psf | None = None
+        self._hybrid_psf: _HybridRequest | None = None
         self._targets: list[_TargetRequest] = []
         self._exposure: _ExposureRequest | None = None
         self._sky_subtraction = _SkySubtraction(
@@ -283,6 +296,89 @@ class Etc:
             pixel_scale=pixel_scale,
             instrument_root=self._instrument.root,
         )
+        self._hybrid_psf = None
+
+    def set_hybrid_psf(
+        self,
+        *,
+        ngs_pointing_offsets: tuple[tuple[u.Quantity, u.Quantity], ...] | None = None,
+        ngs_sky_positions: SkyCoord | None = None,
+        ngs_magnitudes: u.Quantity,
+        wavelength: u.Quantity,
+        zenith_angle: u.Quantity,
+    ) -> None:
+        """Configure one Hybrid AO PSF to be modelled by the next ``run()``.
+
+        Supply exactly one NGS coordinate form. Pointing offsets are ``(x, y)``
+        angular pairs in telescope axes; sky positions are a one-dimensional
+        ``SkyCoord`` and require an absolute telescope pointing. Magnitudes
+        must be a finite, matching one-dimensional quantity in ``mag``.
+        The instrument's ``[hybrid]`` section supplies the zeropoint and
+        asset paths. The current IFU center is the single science position.
+        """
+
+        if self._instrument.hybrid is None:
+            raise ValueError("Instrument etc.ini has no [hybrid] configuration.")
+        if (ngs_pointing_offsets is None) == (ngs_sky_positions is None):
+            raise ValueError(
+                "Provide exactly one of ngs_pointing_offsets and ngs_sky_positions."
+            )
+        offsets = None
+        sky = None
+        if ngs_pointing_offsets is not None:
+            if not isinstance(ngs_pointing_offsets, (tuple, list)) or not ngs_pointing_offsets:
+                raise ValueError(
+                    "ngs_pointing_offsets must contain at least one (x, y) pair."
+                )
+            offsets = tuple(
+                _xy_offset(point, f"ngs_pointing_offsets[{index}]")
+                for index, point in enumerate(ngs_pointing_offsets)
+            )
+        else:
+            if not isinstance(ngs_sky_positions, SkyCoord) or ngs_sky_positions.isscalar:
+                raise TypeError("ngs_sky_positions must be a 1D SkyCoord.")
+            if ngs_sky_positions.ndim != 1 or len(ngs_sky_positions) == 0:
+                raise ValueError("ngs_sky_positions must be a nonempty 1D SkyCoord.")
+            if self._pointing_center is None:
+                raise ValueError(
+                    "ngs_sky_positions requires an absolute telescope pointing."
+                )
+            sky = _icrs_position(ngs_sky_positions).copy()
+            if not np.isfinite(sky.ra.to_value(u.deg)).all() or not np.isfinite(
+                sky.dec.to_value(u.deg)
+            ).all():
+                raise ValueError("ngs_sky_positions must be finite.")
+        if not isinstance(ngs_magnitudes, u.Quantity) or ngs_magnitudes.ndim != 1:
+            raise TypeError("ngs_magnitudes must be a 1D magnitude quantity.")
+        try:
+            magnitudes = ngs_magnitudes.to(u.mag).copy()
+        except u.UnitConversionError as exc:
+            raise u.UnitConversionError("ngs_magnitudes must have mag units.") from exc
+        if not np.isrealobj(magnitudes.value):
+            raise ValueError("ngs_magnitudes must be real.")
+        count = len(offsets) if offsets is not None else len(sky)
+        if magnitudes.size != count or not np.isfinite(magnitudes.value).all():
+            raise ValueError("ngs_magnitudes must be finite with one value per NGS.")
+        if not isinstance(wavelength, u.Quantity) or not wavelength.isscalar:
+            raise TypeError("wavelength must be a scalar spectral quantity.")
+        try:
+            wavelength = wavelength.to(u.um)
+        except u.UnitConversionError as exc:
+            raise u.UnitConversionError("wavelength must have length units.") from exc
+        if not np.isfinite(wavelength.value) or wavelength.value <= 0:
+            raise ValueError("wavelength must be finite and positive.")
+        zenith_angle = _angle(zenith_angle, "zenith_angle")
+        if not 0 <= zenith_angle.to_value(u.deg) < 90:
+            raise ValueError("zenith_angle must be in [0, 90) degrees.")
+        self._hybrid_psf = _HybridRequest(
+            "pointing_offsets" if offsets is not None else "sky_positions",
+            offsets,
+            sky,
+            magnitudes,
+            wavelength.copy(),
+            zenith_angle.copy(),
+        )
+        self._psf = None
 
     def set_exposure(
         self,
@@ -458,6 +554,41 @@ class Etc:
             self._resolve_target(target, ifu_offset, ifu_center, ifu_angle)
             for target in self._targets
         )
+        hybrid_options: HybridOptions | None = None
+        if self._hybrid_psf is not None:
+            request = self._hybrid_psf
+            if not (
+                selection.disperser.wavelength_min
+                <= request.wavelength
+                <= selection.disperser.wavelength_max
+            ):
+                raise ValueError(
+                    "Hybrid PSF wavelength must lie within the selected "
+                    "disperser range."
+                )
+            if request.ngs_sky_positions is None:
+                ngs_offsets = request.ngs_pointing_offsets
+            else:
+                if self._pointing_center is None:
+                    raise ValueError(
+                        "ngs_sky_positions requires an absolute telescope pointing."
+                    )
+                center = _icrs_position(self._pointing_center)
+                ngs_offsets = tuple(
+                    _sky_to_xy(*center.spherical_offsets_to(star), self._position_angle)
+                    for star in request.ngs_sky_positions
+                )
+            psf, hybrid_options = model_psf(
+                root=self._instrument.root,
+                definition=self._instrument.hybrid,
+                coordinate_form=request.coordinate_form,
+                ngs_offsets=ngs_offsets,
+                ngs_magnitudes=request.ngs_magnitudes,
+                science_offset=ifu_offset,
+                wavelength=request.wavelength,
+                zenith_angle=request.zenith_angle,
+                ifu_rotation=self._ifu_position.rotation,
+            )
         output = calculate(
             instrument=self._instrument,
             selection=selection,
@@ -492,6 +623,7 @@ class Etc:
                 sequence=self._sky_subtraction.sequence,
                 mask=sky_mask,
             ),
+            hybrid=hybrid_options,
         )
         return EtcResult(
             snr=output.snr,
@@ -565,7 +697,7 @@ class Etc:
             raise ValueError("Add at least one target before run().")
         if self._exposure is None:
             raise ValueError("Call set_exposure() before run().")
-        if self._psf is None and any(
+        if self._psf is None and self._hybrid_psf is None and any(
             not isinstance(target.spatial, Uniform) for target in self._targets
         ):
             raise ValueError("Call set_psf() before run() for non-uniform targets.")

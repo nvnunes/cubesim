@@ -5,7 +5,7 @@ spectrographs. It provides:
 
 - explicit instrument selection from an external instrument-data directory
 - composable spatial, spectral, and velocity target models
-- direct achromatic PSF input
+- direct achromatic PSF input or optional Hybrid AO PSF modelling
 - nodding and in-field sky subtraction
 - signal-to-noise datacubes with detector signal and variance components
 - reproducible sampled cubes and integrated aperture measurements

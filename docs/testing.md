@@ -33,6 +33,10 @@ cross-reference, and generated-reference validation:
 ./.conda/bin/mkdocs build --strict
 ```
 
+The real Hybrid integration test in `tests/test_hybrid.py` runs when the
+optional `cubesim[hybrid]` extra is installed; otherwise that one test is
+skipped. The remaining Hybrid boundary tests run in the base environment.
+
 ## Completion Expectations
 
 Add or adjust tests with every behavior change.

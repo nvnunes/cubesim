@@ -175,6 +175,37 @@ interpolation and zero-filled boundaries. Negative interpolation residuals are
 clipped, and the centered PSF is normalized to unit total. Calling
 `set_psf()` again replaces the previous PSF.
 
+An instrument bundle with a `[hybrid]` section can instead model one Hybrid
+AO PSF for the current IFU position. Install the optional dependency with
+`pip install 'cubesim[hybrid]'`, then configure NGS magnitudes and either
+telescope-frame offsets or absolute sky positions:
+
+```python
+etc.set_hybrid_psf(
+    ngs_pointing_offsets=((10 * u.arcsec, 0 * u.arcsec),),
+    ngs_magnitudes=u.Quantity([12.0], u.mag),
+    wavelength=1.1 * u.micron,
+    zenith_angle=20 * u.deg,
+)
+```
+
+Use a one-dimensional `SkyCoord` as `ngs_sky_positions` instead of
+`ngs_pointing_offsets` when an absolute telescope pointing has been set.
+The magnitudes must have one finite value per NGS. The explicit science
+wavelength must lie within the selected disperser's range; zenith angle is
+independent of the chosen atmosphere's airmass. The instrument bundle supplies
+the pre-aperture NGS magnitude zeropoint and three Hybrid asset paths.
+CubeSim does not accept NGS photon rates or infer the zeropoint. Hybrid
+converts magnitudes to effective rates and models the PSF during `run()`;
+constructing an ETC or configuring a pending request does not import Hybrid.
+
+Hybrid coordinates and its output image follow `(x, y)` and `[y, x]` in the
+telescope pointing frame. CubeSim rotates the image by the relative IFU
+rotation into detector axes before applying the same centering and
+normalization as a direct PSF. Telescope position angle is not applied a
+second time. Whichever of `set_psf()` or `set_hybrid_psf()` is called last
+controls the next run; repeated Hybrid runs model afresh.
+
 ## Configure Sky Subtraction
 
 Nodding with an `AB` sequence is the default. A sequence consists of `A` target

@@ -12,8 +12,9 @@ etc = cubesim.Etc("/path/to/instrument-data")
 ```
 
 The directory must contain `etc.ini` at its root. Every filename in that file
-is relative to the same root, must identify an existing regular file, and must
-remain inside the directory after symbolic links are resolved. A relative
+is relative to the same root, must identify an existing regular file when
+used, and may point through a symbolic link outside the directory.
+Hybrid files are resolved only when a Hybrid-backed calculation runs. A relative
 instrument-data directory is resolved from the current working directory. If
 that path does not exist, cubesim also resolves it from the nearest ancestor
 containing `pyproject.toml`. Referenced files receive no additional package
@@ -27,8 +28,8 @@ definitions and scientific data are distributed separately from cubesim.
 
 The configuration contains exactly one system, telescope, and detector
 section, at least one scale, disperser, and atmosphere, and zero or more optical
-components. Unknown sections and keys are rejected, and `[DEFAULT]` values are
-not permitted.
+components. An optional `[hybrid]` section defines Hybrid AO PSF assets.
+Unknown sections and keys are rejected, and `[DEFAULT]` values are not permitted.
 
 ```ini
 [system]
@@ -95,6 +96,24 @@ elements and sorts them by the required, unique `order`. Element names must
 also be unique in the selected path. An element with nonzero emissivity
 requires a temperature.
 
+The optional `[hybrid]` section requires four keys:
+
+```ini
+[hybrid]
+mastsel_ini_file = hybrid/mastsel.ini
+science_ho_interpolator_file = hybrid/science.pkl
+ngs_ho_interpolator_file = hybrid/ngs.pkl
+ngs_magnitude_zeropoint = 1.0e9
+```
+
+The three filenames are instrument-data-relative; their extensions and folder
+names are not prescribed. The positive zeropoint is in
+`photon / (m2 s)`, before Hybrid applies telescope and WFS geometry. It must
+be calibrated for the dataset's NGS magnitude system. CubeSim validates the
+zeropoint when loading `etc.ini`, but reads the Hybrid files only when
+`Etc.run()` uses a pending Hybrid PSF. Hybrid owns the MASTSEL and interpolator
+formats. See [Set The PSF](api.md#set-the-psf) for the run-time inputs.
+
 ## INI Units
 
 INI values do not carry unit strings. Their units are fixed by the schema.
@@ -109,6 +128,7 @@ INI values do not carry unit strings. Their units are fixed by the schema.
 | `temperature` | K |
 | `read_noise` | electron per pixel per read |
 | `dark_current` | electron per pixel per second |
+| `ngs_magnitude_zeropoint` | photon / (m2 s), pre-aperture |
 
 Diameters, f-number, spaxel counts, scales, resolving power,
 pixels-per-resolution-element, PWV, airmass, and temperature are positive.

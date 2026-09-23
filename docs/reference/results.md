@@ -57,6 +57,27 @@ and `targets`; CubeSim uses ICRS to resolve their geometry.
 `result.options.exposure` contains `time`, `n`, `n_target`, `n_sky`,
 `target_time`, `sky_time`, and `total_time`. The sky-subtraction options contain
 the method, optional nodding sequence, and optional read-only in-field mask.
+For a Hybrid-backed run, `result.options.hybrid` records:
+
+| Field | Meaning |
+| --- | --- |
+| `coordinate_form` | Supplied NGS form: `pointing_offsets` or `sky_positions` |
+| `ngs_pointing_offsets` | Resolved `(x, y)` NGS offsets in telescope pointing axes, in angular units |
+| `ngs_magnitudes` | Supplied NGS magnitudes, in `mag` |
+| `ngs_magnitude_zeropoint` | Dataset zeropoint, in `photon / (m2 s)` |
+| `ngs_flux` | Hybrid-resolved NGS rates, in `photon / s` |
+| `science_position` | IFU center `(x, y)` in telescope pointing axes, in angular units |
+| `wavelength` | PSF modelling wavelength, in microns |
+| `zenith_angle` | PSF modelling zenith angle, in degrees |
+| `mastsel_ini_file` | Resolved absolute MASTSEL configuration path |
+| `science_ho_interpolator_file` | Resolved absolute science interpolator path |
+| `ngs_ho_interpolator_file` | Resolved absolute NGS interpolator path |
+
+The paths follow any symbolic links in the instrument data. For a run without
+Hybrid modelling, `result.options.hybrid` is `None`. These values are an owned
+snapshot, independent of later ETC changes. The full Hybrid diagnostics are
+not retained; pickle persistence includes the options snapshot, while compact
+FITS exports omit it.
 
 ## Models
 

@@ -92,6 +92,14 @@ class InstrumentSelection:
 
 
 @dataclass(frozen=True, slots=True)
+class HybridDefinition:
+    mastsel_ini_file: str
+    science_ho_interpolator_file: str
+    ngs_ho_interpolator_file: str
+    ngs_magnitude_zeropoint: u.Quantity
+
+
+@dataclass(frozen=True, slots=True)
 class InstrumentDefinition:
     root: Path
     name: str
@@ -101,6 +109,7 @@ class InstrumentDefinition:
     dispersers: dict[str, Disperser]
     atmospheres: dict[str, Atmosphere]
     optical_components: tuple[OpticalComponent, ...]
+    hybrid: HybridDefinition | None
 
     def select(
         self,
@@ -199,6 +208,7 @@ def load_instrument(instrument_data: str | Path) -> InstrumentDefinition:
     dispersers, disperser_scopes = _load_dispersers(parser)
     atmospheres = _load_atmospheres(parser, root)
     optical_components = _load_optical_components(parser, disperser_scopes)
+    hybrid = _load_hybrid(parser)
 
     return InstrumentDefinition(
         root=root,
@@ -209,6 +219,7 @@ def load_instrument(instrument_data: str | Path) -> InstrumentDefinition:
         dispersers=dispersers,
         atmospheres=atmospheres,
         optical_components=optical_components,
+        hybrid=hybrid,
     )
 
 
@@ -244,6 +255,8 @@ def _validate_section_inventory(parser: configparser.ConfigParser) -> None:
     for section in parser.sections():
         if section in required:
             continue
+        if section == "hybrid":
+            continue
         parts = section.split(".")
         if parts[0] in {"scale", "atmosphere"} and len(parts) == 2:
             _validate_name(parts[1], section)
@@ -263,6 +276,28 @@ def _validate_section_inventory(parser: configparser.ConfigParser) -> None:
     empty = [namespace for namespace, count in counts.items() if count == 0]
     if empty:
         raise ValueError(f"etc.ini must define at least one option for: {empty}")
+
+
+def _load_hybrid(parser: configparser.ConfigParser) -> HybridDefinition | None:
+    if "hybrid" not in parser:
+        return None
+    keys = {
+        "mastsel_ini_file",
+        "science_ho_interpolator_file",
+        "ngs_ho_interpolator_file",
+        "ngs_magnitude_zeropoint",
+    }
+    values = _section(parser, "hybrid", required=keys)
+    filenames = {key: values[key].strip() for key in keys if key.endswith("_file")}
+    for key, filename in filenames.items():
+        if not filename:
+            raise ValueError(f"hybrid.{key} must be non-empty.")
+    return HybridDefinition(
+        **filenames,
+        ngs_magnitude_zeropoint=_positive_float(
+            values["ngs_magnitude_zeropoint"], "hybrid.ngs_magnitude_zeropoint"
+        ) * u.photon / (u.m**2 * u.s),
+    )
 
 
 def _section(
@@ -523,12 +558,6 @@ def _resolve_reference(root: Path, value: str) -> Path:
     if relative.is_absolute():
         raise ValueError(f"INI file references must be relative: {value!r}")
     path = (root / relative).resolve()
-    try:
-        path.relative_to(root)
-    except ValueError as exc:
-        raise ValueError(
-            f"INI file reference escapes the instrument bundle: {value!r}"
-        ) from exc
     if not path.is_file():
         raise FileNotFoundError(f"Referenced instrument file does not exist: {path}")
     return path

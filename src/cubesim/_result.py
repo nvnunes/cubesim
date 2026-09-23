@@ -36,6 +36,37 @@ class SkySubtractionOptions:
 
 
 @dataclass(frozen=True, slots=True)
+class HybridOptions:
+    """Resolved Hybrid inputs and outputs retained with one ETC result.
+
+    Attributes:
+        coordinate_form: ``pointing_offsets`` or ``sky_positions`` as supplied.
+        ngs_pointing_offsets: Resolved NGS ``(x, y)`` pairs in telescope axes.
+        ngs_magnitudes: Supplied NGS magnitudes in ``mag``.
+        ngs_magnitude_zeropoint: Dataset zeropoint in ``photon / (m2 s)``.
+        ngs_flux: Hybrid-resolved NGS photon rates in ``photon / s``.
+        science_position: IFU center ``(x, y)`` in telescope axes.
+        wavelength: PSF modelling wavelength in microns.
+        zenith_angle: PSF modelling zenith angle in degrees.
+        mastsel_ini_file: Resolved MASTSEL configuration path.
+        science_ho_interpolator_file: Resolved science interpolator path.
+        ngs_ho_interpolator_file: Resolved NGS interpolator path.
+    """
+
+    coordinate_form: str
+    ngs_pointing_offsets: tuple[tuple[u.Quantity, u.Quantity], ...]
+    ngs_magnitudes: u.Quantity
+    ngs_magnitude_zeropoint: u.Quantity
+    ngs_flux: u.Quantity
+    science_position: tuple[u.Quantity, u.Quantity]
+    wavelength: u.Quantity
+    zenith_angle: u.Quantity
+    mastsel_ini_file: Path
+    science_ho_interpolator_file: Path
+    ngs_ho_interpolator_file: Path
+
+
+@dataclass(frozen=True, slots=True)
 class ResultOptions:
     instrument: str
     scale: str
@@ -52,6 +83,7 @@ class ResultOptions:
     psf_path: Any | None
     exposure: ExposureOptions
     sky_subtraction: SkySubtractionOptions
+    hybrid: HybridOptions | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -586,6 +618,8 @@ def readonly_options(options: ResultOptions) -> ResultOptions:
     _freeze_nested_data(ifu_position)
     ifu_center = copy.deepcopy(options.ifu_center)
     _freeze_nested_data(ifu_center)
+    hybrid = copy.deepcopy(options.hybrid)
+    _freeze_nested_data(hybrid)
     exposure = ExposureOptions(
         time=_readonly_quantity(options.exposure.time),
         n=options.exposure.n,
@@ -621,6 +655,7 @@ def readonly_options(options: ResultOptions) -> ResultOptions:
         psf_path=options.psf_path,
         exposure=exposure,
         sky_subtraction=sky_subtraction,
+        hybrid=hybrid,
     )
 
 
